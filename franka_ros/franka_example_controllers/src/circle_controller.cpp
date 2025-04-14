@@ -39,6 +39,27 @@ bool CircleController::init(hardware_interface::RobotHW* robot_hw,
   if (!node_handle.getParam("circle_frequency", circle_frequency_)) {
     ROS_INFO_STREAM("CircleController: Using default circle frequency: " << circle_frequency_);
   }
+  
+  // 从参数服务器读取圆周运动平面参数
+  if (!node_handle.getParam("circle_plane", circle_plane_)) {
+    ROS_INFO_STREAM("CircleController: Using default circle plane: " << circle_plane_);
+  }
+
+  // 从参数服务器读取圆周运动中心点参数
+  double center_x = 0.0, center_y = 0.0, center_z = 0.0;
+  if (node_handle.getParam("center_x", center_x)) {
+    ROS_INFO_STREAM("CircleController: Using specified center_x: " << center_x);
+  }
+  if (node_handle.getParam("center_y", center_y)) {
+    ROS_INFO_STREAM("CircleController: Using specified center_y: " << center_y);
+  }
+  if (node_handle.getParam("center_z", center_z)) {
+    ROS_INFO_STREAM("CircleController: Using specified center_z: " << center_z);
+  }
+
+  // 设置圆周运动中心点
+  circle_center_ = Eigen::Vector3d(center_x, center_y, center_z);
+  ROS_INFO_STREAM("CircleController: Circle center set to: " << circle_center_.transpose());
 
   // 获取机器人模型接口
   auto* model_interface = robot_hw->get<franka_hw::FrankaModelInterface>();
@@ -120,8 +141,15 @@ void CircleController::starting(const ros::Time& /*time*/) {
   Eigen::Map<Eigen::Matrix<double, 7, 1>> q_initial(initial_state.q.data());
   Eigen::Affine3d initial_transform(Eigen::Matrix4d::Map(initial_state.O_T_EE.data()));
 
-  // 设置圆周中心为初始位置
-  circle_center_ = initial_transform.translation();
+  // 如果中心点未指定，则使用初始位置作为中心点
+  if (circle_center_.norm() < 1e-6) {
+    circle_center_ = initial_transform.translation();
+    ROS_INFO_STREAM("CircleController: Using initial position as circle center: " 
+                    << circle_center_.transpose());
+  } else {
+    ROS_INFO_STREAM("CircleController: Using specified circle center: " 
+                    << circle_center_.transpose());
+  }
   
   // 设置初始目标位置和方向
   position_d_ = circle_center_;
@@ -132,6 +160,11 @@ void CircleController::starting(const ros::Time& /*time*/) {
   
   // 重置时间
   elapsed_time_ = 0.0;
+  
+  // 输出初始设置信息
+  ROS_INFO_STREAM("CircleController: Starting with circle plane: " << circle_plane_ 
+                  << ", radius: " << circle_radius_ 
+                  << ", frequency: " << circle_frequency_);
 }
 
 void CircleController::update(const ros::Time& /*time*/,
@@ -157,11 +190,40 @@ void CircleController::update(const ros::Time& /*time*/,
   Eigen::Quaterniond orientation(transform.rotation());
 
   // 计算圆周运动的目标位置
-  // 在XY平面上作圆周运动，Z轴保持不变
+  // 根据指定的平面进行圆周运动
   double angle = 2.0 * M_PI * circle_frequency_ * elapsed_time_;
-  position_d_(0) = circle_center_(0) + circle_radius_ * cos(angle);
-  position_d_(1) = circle_center_(1) + circle_radius_ * sin(angle);
-  position_d_(2) = circle_center_(2);  // Z轴保持不变
+  
+  // 默认在XY平面上作圆周运动
+  position_d_ = circle_center_;
+  
+  if (circle_plane_ == "xy") {
+    // 在XY平面上作圆周运动，Z轴保持不变
+    position_d_(0) = circle_center_(0) + circle_radius_ * cos(angle);
+    position_d_(1) = circle_center_(1) + circle_radius_ * sin(angle);
+    position_d_(2) = circle_center_(2);  // Z轴保持不变
+  } else if (circle_plane_ == "xz") {
+    // 在XZ平面上作圆周运动，Y轴保持不变
+    position_d_(0) = circle_center_(0) + circle_radius_ * cos(angle);
+    position_d_(1) = circle_center_(1);  // Y轴保持不变
+    position_d_(2) = circle_center_(2) + circle_radius_ * sin(angle);
+  } else if (circle_plane_ == "yz") {
+    // 在YZ平面上作圆周运动，X轴保持不变
+    position_d_(0) = circle_center_(0);  // X轴保持不变
+    position_d_(1) = circle_center_(1) + circle_radius_ * cos(angle);
+    position_d_(2) = circle_center_(2) + circle_radius_ * sin(angle);
+  } else {
+    // 默认在XY平面上作圆周运动
+    position_d_(0) = circle_center_(0) + circle_radius_ * cos(angle);
+    position_d_(1) = circle_center_(1) + circle_radius_ * sin(angle);
+    position_d_(2) = circle_center_(2);  // Z轴保持不变
+  }
+  
+  // 每隔一段时间输出目标位置信息，用于调试
+  static int debug_counter = 0;
+  if (debug_counter++ % 100 == 0) {
+    ROS_INFO_STREAM("CircleController: Target position: " << position_d_.transpose() 
+                    << ", Current position: " << position.transpose());
+  }
 
   // 计算位置和方向误差
   Eigen::Matrix<double, 6, 1> error;

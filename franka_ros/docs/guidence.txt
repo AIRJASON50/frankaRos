@@ -1,1 +1,130 @@
-roslaunch franka_gazebo fr3.launch x:=-0.5 world:=$(rospack find franka_gazebo)/world/empty_with_soft_block.world controller:=circle_controller use_gripper:=false sphere_ee:=true rviz:=true
+记录
+## 原始命令
+roslaunch franka_gazebo 
+fr3.launch x:=-0.5 
+world:=$(rospack find franka_gazebo)/world/empty_with_soft_block.world 
+controller:=circle_controller 
+use_gripper:=false 
+sphere_ee:=true rviz:=true
+
+## 2024年0414更新 - FR3带独立探头的仿真
+
+### 修改内容
+1. 优化了启动文件fr3_with_independent_probe.launch:
+   - 修改机械臂默认位置到x=-0.8米，远离桌子和软块，避免碰撞
+   - 默认加载带软块的世界文件: empty_with_soft_block.world
+   - 设置了更合适的初始关节角度，改善姿态稳定性
+   - 默认使用画圆控制器(circle_controller)
+
+2. 优化了探头设计:
+   - 降低了探头质量从1.96kg到0.5kg，减轻对末端姿态的影响
+   - 调整了探头惯性参数，提高稳定性
+
+
+### 项目结构
+```
+franka_ros/                     # 项目根目录
+├── docs/                       # 文档目录
+│   └── guidence.txt            # 使用指南和文档
+├── franka_control/             # 控制器节点和接口
+├── franka_description/         # 机器人模型描述文件
+│   ├── meshes/                 # 3D模型文件
+│   │   └── probe/              # 探头3D模型
+│   │       └── franka_probe.xacro  # 探头定义文件(已修改)
+│   └── robots/
+│       ├── common/
+│       └── fr3/                # FR3机器人模型
+├── franka_example_controllers/ # 示例控制器实现
+│   ├── include/                # 头文件
+│   ├── src/                    # 源代码
+│   │   └── circle_controller.cpp  # 圆周轨迹控制器(已修改)
+│   └── config/                 # 控制器配置
+├── franka_gazebo/              # Gazebo仿真包
+│   ├── launch/
+│   │   ├── fr3_with_independent_probe.launch  # 带独立探头的启动文件(已修改)
+│   │   └── robot.launch        # 机器人基础启动文件
+│   ├── models/                 # Gazebo模型文件
+│   │   └── probe_model/        # 探头模型
+│   └── world/                  # 世界文件
+│       └── empty_with_soft_block.world  # 带软块的世界
+└── franka_gripper/             # 夹爪控制包
+```
+
+### 关键文件说明
+1. **fr3_with_independent_probe.launch**
+   - 位置: `franka_ros/franka_gazebo/launch/fr3_with_independent_probe.launch`
+   - 功能: 启动带独立探头的FR3机器人仿真
+   - 主要参数: 
+     * x, y, z: 机器人位置
+     * controller: 控制器类型
+     * world: 仿真世界文件路径
+     * initial_joint_positions: 初始关节角度
+
+2. **franka_probe.xacro**
+   - 位置: `franka_ros/franka_description/robots/common/franka_probe.xacro`
+   - 功能: 定义探头模型及其物理特性
+   - 主要修改:
+     * 探头质量(mass)
+     * 惯性参数(inertia)
+     * 碰撞属性(collision)
+
+3. **circle_controller.cpp**
+   - 位置: `franka_ros/franka_example_controllers/src/circle_controller.cpp`
+   - 功能: 实现圆周轨迹控制
+   - 主要参数:
+     * cartesian_stiffness_: 笛卡尔空间刚度矩阵
+     * circle_radius_: 圆周半径
+     * circle_frequency_: 圆周频率
+
+### 使用说明
+1. 简化启动命令:
+   ```
+   roslaunch franka_gazebo fr3_with_independent_probe.launch
+   ```
+   
+2. 自定义配置 (可选参数):
+   ```
+   roslaunch franka_gazebo fr3_with_independent_probe.launch x:=-0.5 y:=0.2 controller:=cartesian_impedance_example_controller
+   ```
+   
+3. 可用控制器选项:
+   - circle_controller: 默认，机械臂末端做圆周运动
+   - cartesian_impedance_example_controller: 笛卡尔空间阻抗控制
+   - joint_position_example_controller: 关节位置控制
+   - joint_velocity_example_controller: 关节速度控制
+   
+4. 查看力传感器数据:
+   ```
+   rostopic echo /franka_state_controller/F_ext
+   ```
+
+### 代码注释规范
+项目采用以下注释风格:
+```cpp
+/**
+ * @brief 函数或类的简要描述
+ * @param param_name 参数说明
+ * @return 返回值说明
+ */
+```
+
+```xml
+<!-- 
+  描述: 元素的简要描述
+  参数:
+    - param_name: 参数说明
+  注意: 特别需要注意的事项
+-->
+```
+
+### 常见问题
+
+1. 错误: "Invalid <param> tag: Cannot load command parameter [robot_description]: no such command [['xacro'..."
+   解决方法: 安装xacro包 `sudo apt-get install ros-noetic-xacro`
+   
+2. 机械臂末端不稳定或姿态异常
+   解决方法: 修改探头质量或调整控制器参数
+   
+3. 机械臂与桌子碰撞
+   解决方法: 调整机械臂位置参数 `x:=-0.8 y:=0.3`
+

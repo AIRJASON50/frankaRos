@@ -43,6 +43,7 @@ class CircleController : public controller_interface::MultiInterfaceController<
   double circle_radius_{0.1};  // 圆周半径（米）
   double circle_frequency_{0.5};  // 圆周运动频率（Hz）
   double elapsed_time_{0.0};  // 已经过的时间（秒）
+  std::string circle_plane_{"yz"};  // 圆周运动平面，可选值: "xy", "xz", "yz"，默认为"yz"（垂直于地面）
   
   // 控制参数
   double filter_params_{0.005};

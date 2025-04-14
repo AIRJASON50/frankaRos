@@ -1,88 +1,197 @@
 <?xml version='1.0'?>
+<!--
+  桌子模型定义文件
+  
+  作者: AIRJASON50
+  日期: 2024-04-14
+  
+  此文件定义了仿真环境中使用的桌子模型，包括：
+  - 尺寸信息
+  - 物理属性
+  - 视觉外观
+  - 碰撞检测参数
+  
+  修改桌子高度的方法:
+  1. 调整<size>标签中的第三个值(z轴高度)
+  2. 如果修改了高度，记得同时更新世界文件中软块的z坐标位置
+-->
 <sdf version='1.6'>
   <model name='table'>
     <link name='link'>
-      <pose>0 0 0.2099115 0 -0 0</pose>
+      <!-- 
+        桌子位置偏移，0.1表示桌子中心点高于地面0.1米
+        如果需要调整桌子整体高度位置，可修改此z值
+        
+        position格式: [x y z roll pitch yaw]
+        - x: 前后偏移（0表示模型中心）
+        - y: 左右偏移（0表示模型中心）
+        - z: 高度偏移（重要值，影响桌面高度）
+        - roll: 绕X轴旋转（0表示水平）
+        - pitch: 绕Y轴旋转（0表示水平）
+        - yaw: 绕Z轴旋转（0表示正向）
+      -->
+      <pose>0 0 0.2 0 -0 0</pose>
       <inertial>
+        <!-- 
+          惯性属性中心点，通常与几何中心一致
+          设置为原点(0,0,0)表示惯性中心与链接坐标系原点重合
+        -->
         <pose>0 0 0 0 -0 0</pose>
+        <!-- 质量: 10kg，适合模拟稳定的桌子结构 -->
         <mass>10</mass>
+        <!-- 
+          惯性矩阵: 定义桌子的转动惯性特性
+          计算公式基于立方体近似:
+            ixx = (1/12) * 质量 * (宽² + 高²)
+            iyy = (1/12) * 质量 * (长² + 高²)
+            izz = (1/12) * 质量 * (长² + 宽²)
+          
+          0.166667是简化值，适用于近似立方体的物体
+          对于精确计算，应根据实际尺寸调整
+        -->
         <inertia>
-          <ixx>0.166667</ixx>
-          <ixy>0</ixy>
-          <ixz>0</ixz>
-          <iyy>0.166667</iyy>
-          <iyz>0</iyz>
-          <izz>0.166667</izz>
+          <ixx>0.166667</ixx>  <!-- x轴转动惯性 -->
+          <ixy>0</ixy>          <!-- xy平面耦合惯性 -->
+          <ixz>0</ixz>          <!-- xz平面耦合惯性 -->
+          <iyy>0.166667</iyy>   <!-- y轴转动惯性 -->
+          <iyz>0</iyz>          <!-- yz平面耦合惯性 -->
+          <izz>0.166667</izz>   <!-- z轴转动惯性 -->
         </inertia>
       </inertial>
+      <!-- 禁用自碰撞检测: 0表示链接内部不进行碰撞检测 -->
       <self_collide>0</self_collide>
+      <!-- 禁用风力效果: 桌子不受风力影响 -->
       <enable_wind>0</enable_wind>
+      <!-- 非运动学模式: 0表示受物理引擎控制，而非纯运动学 -->
       <kinematic>0</kinematic>
       <visual name='visual'>
+        <!-- 视觉元素位姿: 相对于链接坐标系 -->
         <pose>0 0 0 0 -0 0</pose>
         <geometry>
           <box>
-            <size>0.453157 0.642049 0.419823</size>
+            <!-- 
+              桌子尺寸 [长 宽 高]
+              - 第一个值(0.4): 桌子长度(x轴，前后方向)
+              - 第二个值(0.6): 桌子宽度(y轴，左右方向)
+              - 第三个值(0.4): 桌子高度(z轴，上下方向)
+              
+              桌子总体高度计算:
+              链接z位置(0.1) + 桌子高度的一半(0.4/2) = 0.3米
+              桌面离地面高度 = 链接z位置 + 桌子高度 = 0.1 + 0.4 = 0.5米
+              
+              修改桌子高度: 更改第三个值(0.4)
+              注意: 如果修改了此值，需要同时更新以下内容:
+              1. 世界文件中软块的z坐标(约等于桌子总高度)
+              2. 可能需要调整机器人位置或初始关节角度
+            -->
+            <size>0.4 0.6 0.4</size>
           </box>
         </geometry>
+        <!-- 
+          材质属性: 定义桌面外观
+          使用Gazebo内置的灰色材质
+        -->
         <material>
           <script>
-            <name>Gazebo/Grey</name>
+            <!-- Gazebo标准材质：灰色 -->
+            <n>Gazebo/Grey</n>
+            <!-- 材质脚本路径 -->
             <uri>file://media/materials/scripts/gazebo.material</uri>
           </script>
+          <!-- 像素着色器: 使用标准着色模型 -->
           <shader type='pixel'/>
         </material>
+        <!-- 视觉元素位姿: 与链接原点对齐 -->
         <pose>0 0 0 0 -0 0</pose>
+        <!-- 透明度: 0表示完全不透明 -->
         <transparency>0</transparency>
+        <!-- 投射阴影: 1表示启用阴影投射 -->
         <cast_shadows>1</cast_shadows>
       </visual>
       <collision name='collision'>
+        <!-- 激光反射率: 对激光传感器的反射强度 -->
         <laser_retro>0</laser_retro>
+        <!-- 最大接触点数: 影响碰撞计算精度 -->
         <max_contacts>10</max_contacts>
+        <!-- 碰撞几何体位姿: 与链接原点对齐 -->
         <pose>0 0 0 0 -0 0</pose>
+        <!-- 碰撞几何体: 与视觉几何体尺寸一致的长方体 -->
         <geometry>
           <box>
-            <size>0.453157 0.642049 0.419823</size>
+            <size>0.4 0.6 0.4</size>
           </box>
         </geometry>
         <surface>
+          <!-- 摩擦特性: 控制探头与桌面接触时的滑动行为 -->
           <friction>
             <ode>
+              <!-- 
+                摩擦系数: 1.0，较高摩擦力
+                适合模拟桌面材质，防止物体轻易滑落
+              -->
               <mu>1</mu>
               <mu2>1</mu2>
+              <!-- 主摩擦方向: 使用默认方向 -->
               <fdir1>0 0 0</fdir1>
+              <!-- 无滑移: 0表示不允许微小滑动 -->
               <slip1>0</slip1>
               <slip2>0</slip2>
             </ode>
+            <!-- 扭转摩擦: 控制物体旋转时的摩擦 -->
             <torsional>
+              <!-- 扭转摩擦系数: 1表示较高扭转阻力 -->
               <coefficient>1</coefficient>
               <patch_radius>0</patch_radius>
               <surface_radius>0</surface_radius>
+              <!-- 使用接触面积计算: 1表示启用 -->
               <use_patch_radius>1</use_patch_radius>
               <ode>
+                <!-- 扭转滑移: 0表示不允许扭转滑动 -->
                 <slip>0</slip>
               </ode>
             </torsional>
           </friction>
+          <!-- 反弹特性: 控制物体碰撞后的弹性行为 -->
           <bounce>
+            <!-- 恢复系数: 0表示完全不反弹 -->
             <restitution_coefficient>0</restitution_coefficient>
+            <!-- 反弹阈值: 大于此值的碰撞速度才计算反弹 -->
             <threshold>1e+06</threshold>
           </bounce>
+          <!-- 接触特性: 精细控制物理接触行为 -->
           <contact>
+            <!-- 非接触碰撞: 0表示禁用非接触碰撞响应 -->
             <collide_without_contact>0</collide_without_contact>
             <collide_without_contact_bitmask>1</collide_without_contact_bitmask>
+            <!-- 碰撞掩码: 用于选择性碰撞检测 -->
             <collide_bitmask>1</collide_bitmask>
+            <!-- ODE物理引擎接触参数 -->
             <ode>
+              <!-- 
+                接触软度: 控制接触面弹性
+                0表示刚性接触，适合模拟硬桌面
+              -->
               <soft_cfm>0</soft_cfm>
+              <!-- 错误减小率: 控制接触误差修正速度 -->
               <soft_erp>0.2</soft_erp>
+              <!-- 
+                接触刚度系数: 1e+13表示非常硬的表面
+                比软块(1,000,000)高得多，模拟坚硬桌面
+              -->
               <kp>1e+13</kp>
+              <!-- 阻尼系数: 控制能量耗散率 -->
               <kd>1</kd>
+              <!-- 最大接触速度: 限制接触计算中的最大速度 -->
               <max_vel>0.01</max_vel>
+              <!-- 最小接触深度: 小于此值的接触被忽略 -->
               <min_depth>0</min_depth>
             </ode>
+            <!-- Bullet物理引擎接触参数（备用引擎） -->
             <bullet>
+              <!-- 脉冲分离: 使用分离脉冲算法提高稳定性 -->
               <split_impulse>1</split_impulse>
               <split_impulse_penetration_threshold>-0.01</split_impulse_penetration_threshold>
+              <!-- Bullet引擎特有的接触参数 -->
               <soft_cfm>0</soft_cfm>
               <soft_erp>0.2</soft_erp>
               <kp>1e+13</kp>
@@ -92,7 +201,15 @@
         </surface>
       </collision>
     </link>
+    <!-- 
+      静态属性: 1表示桌子固定不移动
+      设置为静态可提高仿真性能，适合不需要移动的物体
+    -->
     <static>1</static>
+    <!-- 
+      允许自动禁用: 1表示当物体静止时可被物理引擎优化
+      提高长时间仿真的计算效率
+    -->
     <allow_auto_disable>1</allow_auto_disable>
   </model>
 </sdf>

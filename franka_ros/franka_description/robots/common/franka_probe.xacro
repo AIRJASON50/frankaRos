@@ -1,22 +1,48 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+  FR3机器人独立力探头定义文件
+  
+  作者: AIRJASON50
+  日期: 2024-04-14
+  
+  此文件定义了FR3机器人使用的力探头末端执行器。探头连接到机器人末端，
+  用于感知接触力并与环境进行交互。本文件包含探头的视觉外观、物理特性
+  和仿真参数。
+  
+  主要修改:
+  1. 降低探头质量从1.96kg到0.5kg，使控制器能更好地控制末端姿态
+  2. 调整惯性参数与质量匹配
+  3. 添加详细的接触属性，提高力反馈准确性
+  4. 将prismatic关节改为fixed关节，使探头固定连接到机器人末端
+-->
 <robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="probe">
-  <!-- 探头模型定义 -->
+  <!-- 
+    探头模型定义
+    参数说明:
+    - connected_to: 连接到的父链接名称
+    - arm_id: 机器人ID，用于命名链接和关节
+    - rpy: 探头相对于父链接的旋转角度(roll-pitch-yaw)
+    - xyz: 探头相对于父链接的位置偏移
+    - tcp_xyz: 工具中心点(TCP)相对于探头的位置偏移
+    - tcp_rpy: 工具中心点相对于探头的旋转角度
+    - safety_distance: 安全距离，用于碰撞检测
+    - gazebo: 是否在Gazebo中仿真
+    - description_pkg: 模型文件所在包的名称
+  -->
   <xacro:macro name="franka_probe" params="connected_to:='' arm_id:='panda' rpy:='0 0 0' xyz:='0 0 0' tcp_xyz:='0 0 0.05' tcp_rpy:='0 0 0' safety_distance:=0 gazebo:=false description_pkg:=franka_description">
     <xacro:unless value="${connected_to == ''}">
-      <!-- 使用与finger_joint类似的名称和类型 -->
-      <joint name="${arm_id}_probe_finger_joint" type="prismatic">
+      <!-- 定义探头关节 - 使用fixed类型，确保探头固定连接到机器人末端 -->
+      <joint name="${arm_id}_probe_joint" type="fixed">
         <parent link="${connected_to}" />
         <child link="${arm_id}_probe" />
         <!-- 所有情况下使用给定的位置和方向 -->
         <origin xyz="${xyz}" rpy="${rpy}" />
-        <!-- 设置为固定的prismatic关节，移动范围为0 -->
-        <axis xyz="0 0 1" />
-        <limit effort="100" lower="0.0" upper="0.0" velocity="0.2" />
-        <dynamics damping="0.3" />
       </joint>
     </xacro:unless>
 
+    <!-- 探头链接定义 -->
     <link name="${arm_id}_probe">
+      <!-- 视觉外观 -->
       <visual>
         <geometry>
           <mesh filename="package://${description_pkg}/meshes/probe/probe.stl" scale="0.001 0.001 0.001"/>
@@ -29,6 +55,8 @@
         <!-- 中心点约为X=43，Y=51，Z=57，但我们需要Z轴上表面对齐 -->
         <origin xyz="-0.043 -0.051 -0.0" rpy="0 0 0" />
       </visual>
+      
+      <!-- 碰撞检测几何体 -->
       <collision>
         <geometry>
           <mesh filename="package://${description_pkg}/meshes/probe/probe.stl" scale="0.001 0.001 0.001"/>
@@ -52,17 +80,19 @@
           </friction>
         </surface>
       </collision>
+      
+      <!-- 物理特性: 质量和惯性 -->
       <inertial>
         <!-- 原始质量：钢的密度约为7850 kg/m³，假设探头体积约为0.05×0.05×0.1=0.00025 m³ -->
-        <!-- 降低重量以减轻对控制器的负担 -->
+        <!-- 降低重量以减轻对控制器的负担，原始为1.96kg，现调整为0.5kg -->
         <mass value="0.5" />
-        <!-- 降低相应的惯性矩阵值 -->
+        <!-- 降低相应的惯性矩阵值，与质量匹配 -->
         <inertia ixx="0.0002" ixy="0" ixz="0" iyy="0.0002" iyz="0" izz="0.0001" />
         <origin xyz="-0.043 -0.051 -0.0" rpy="0 0 0" />
       </inertial>
     </link>
 
-    <!-- 定义探头TCP点，与末端执行器坐标系对齐 -->
+    <!-- 定义探头TCP点，与末端执行器坐标系对齐，用于力反馈和接触检测 -->
     <link name="${arm_id}_probe_tcp" />
     <joint name="${arm_id}_probe_tcp_joint" type="fixed">
       <origin xyz="${tcp_xyz}" rpy="${tcp_rpy}" />
@@ -70,7 +100,7 @@
       <child link="${arm_id}_probe_tcp" />
     </joint>
 
-    <!-- Gazebo特定标签 -->
+    <!-- Gazebo仿真特定参数 -->
     <xacro:if value="${gazebo}">
       <gazebo reference="${arm_id}_probe">
         <material>Gazebo/SteelBrushed</material>
@@ -87,13 +117,13 @@
         <maxContacts>20</maxContacts>
       </gazebo>
       
-      <!-- 使用与finger_joint类似的名称 -->
-      <transmission name="${arm_id}_probe_finger_joint_transmission">
+      <!-- 传动系统定义 - 使用与finger_joint类似的名称 -->
+      <transmission name="${arm_id}_probe_joint_transmission">
         <type>transmission_interface/SimpleTransmission</type>
-        <joint name="${arm_id}_probe_finger_joint">
+        <joint name="${arm_id}_probe_joint">
           <hardwareInterface>hardware_interface/EffortJointInterface</hardwareInterface>
         </joint>
-        <actuator name="${arm_id}_probe_finger_joint_motor">
+        <actuator name="${arm_id}_probe_joint_motor">
           <hardwareInterface>hardware_interface/EffortJointInterface</hardwareInterface>
         </actuator>
       </transmission>

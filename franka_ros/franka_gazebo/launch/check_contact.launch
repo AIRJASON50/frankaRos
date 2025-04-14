@@ -1,0 +1,29 @@
+<?xml version="1.0" ?>
+<!--
+  接触检测启动文件
+  
+  作者: AIRJASON50
+  日期: 2024-04-14
+  
+  此启动文件用于启动接触检测节点，用于检测软块和桌子是否接触
+  主要功能:
+  1. 启动接触检测节点
+  2. 设置日志级别
+  3. 可选地启动RViz可视化
+-->
+<launch>
+  <!-- 设置日志级别为INFO，显示更多信息 -->
+  <env name="ROSCONSOLE_STDOUT_LINE_BUFFERED" value="1"/>
+  <env name="ROSCONSOLE_CONFIG_FILE" value="$(find franka_gazebo)/config/contact_checker_logging.conf"/>
+  
+  <!-- 启动接触检测节点 -->
+  <node name="contact_checker" pkg="franka_gazebo" type="check_contact.py" output="screen" respawn="true">
+    <!-- 日志记录间隔，单位秒 -->
+    <param name="log_interval" value="1.0"/>
+    <!-- 接触判定阈值，单位米 -->
+    <param name="contact_threshold" value="0.001"/>
+  </node>
+  
+  <!-- 可选: 启动RViz可视化 -->
+  <!-- <node name="rviz" pkg="rviz" type="rviz" args="-d $(find franka_gazebo)/rviz/contact_checker.rviz" /> -->
+</launch> 

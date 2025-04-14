@@ -1,41 +1,77 @@
 <?xml version="1.0" ?>
+<!--
+  探头模型定义文件
+  
+  作者: AIRJASON50
+  日期: 2024-04-14
+  
+  此文件定义了用于FR3机器人的力探头模型，包括：
+  - 几何形状（使用STL网格模型）
+  - 物理特性（质量、惯性矩阵）
+  - 接触与摩擦参数
+  - 视觉外观
+  - 附加插件
+-->
 <sdf version="1.6">
   <model name="probe_model">
+    <!-- 模型全局位姿，相对于世界坐标系，格式: x y z roll pitch yaw -->
     <pose>0 0 0 0 0 0</pose>
     <link name="link">
+      <!-- 链接位姿，相对于模型坐标系 -->
       <pose>0 0 0 0 0 0</pose>
       <inertial>
+        <!-- 质量属性: 0.1kg，轻量化设计适合作为末端执行器 -->
         <mass>0.1</mass>
+        <!-- 
+          惯性矩阵: 定义探头的转动惯性特性
+          由于探头较小且质量分布均匀，所有主惯性矩都设为较小值
+        -->
         <inertia>
-          <ixx>0.00001</ixx>
-          <ixy>0</ixy>
-          <ixz>0</ixz>
-          <iyy>0.00001</iyy>
-          <iyz>0</iyz>
-          <izz>0.00001</izz>
+          <ixx>0.00001</ixx>  <!-- x轴转动惯性 -->
+          <ixy>0</ixy>         <!-- xy平面耦合惯性 -->
+          <ixz>0</ixz>         <!-- xz平面耦合惯性 -->
+          <iyy>0.00001</iyy>  <!-- y轴转动惯性 -->
+          <iyz>0</iyz>         <!-- yz平面耦合惯性 -->
+          <izz>0.00001</izz>  <!-- z轴转动惯性 -->
         </inertia>
       </inertial>
       <collision name="collision">
+        <!-- 碰撞几何体: 使用与视觉相同的STL模型 -->
         <geometry>
           <mesh>
+            <!-- STL文件路径 -->
             <uri>model://probe_model/meshes/probe.stl</uri>
+            <!-- 
+              缩放因子: 0.001表示将STL模型(通常以毫米为单位)转换为米
+              三个值分别表示x、y、z方向的缩放比例
+            -->
             <scale>0.001 0.001 0.001</scale>
           </mesh>
         </geometry>
         <surface>
+          <!-- 接触参数: 控制物理引擎如何处理接触 -->
           <contact>
             <ode>
+              <!-- 接触刚度系数: 较高值(100000.0)使探头硬度适合力反馈 -->
               <kp>100000.0</kp>
+              <!-- 阻尼系数: 控制能量耗散率 -->
               <kd>1.0</kd>
+              <!-- 最大接触速度: 限制接触计算中的最大速度 -->
               <max_vel>0.1</max_vel>
+              <!-- 最小接触深度: 小于此值的接触被忽略 -->
               <min_depth>0.001</min_depth>
             </ode>
           </contact>
+          <!-- 摩擦参数: 控制探头与其他物体接触时的摩擦特性 -->
           <friction>
             <ode>
+              <!-- 主摩擦系数: 0.8适中摩擦力 -->
               <mu>0.8</mu>
+              <!-- 次摩擦系数: 通常与mu相同 -->
               <mu2>0.8</mu2>
+              <!-- 摩擦方向: 0 0 0表示使用默认方向 -->
               <fdir1>0 0 0</fdir1>
+              <!-- 滑移参数: 控制物体在接触面上的滑动行为 -->
               <slip1>0.0</slip1>
               <slip2>0.0</slip2>
             </ode>
@@ -43,23 +79,35 @@
         </surface>
       </collision>
       <visual name="visual">
+        <!-- 视觉几何体: 控制探头外观 -->
         <geometry>
           <mesh>
             <uri>model://probe_model/meshes/probe.stl</uri>
             <scale>0.001 0.001 0.001</scale>
           </mesh>
         </geometry>
+        <!-- 材质: 设置探头表面颜色和外观 -->
         <material>
           <script>
+            <!-- 使用Gazebo标准材质库 -->
             <uri>file://media/materials/scripts/gazebo.material</uri>
-            <name>Gazebo/Blue</name>
+            <!-- 蓝色材质: 让探头在仿真中更易辨识 -->
+            <n>Gazebo/Blue</n>
           </script>
         </material>
+        <!-- 
+          视觉元素位姿偏移: 调整视觉模型相对于碰撞模型的位置
+          此处的偏移确保STL模型正确对齐
+        -->
         <pose>-0.043 -0.051 -0.057 0 0 0</pose>
       </visual>
     </link>
     
-    <!-- 添加插件，使探头能够跟随机器人末端 -->
+    <!-- 
+      探头附加插件: 使探头能够跟随机器人末端
+      libgazebo_ros_attacher.so插件提供在仿真运行时将模型附加到其他模型的功能
+      这对于模拟探头安装在机器人末端非常重要
+    -->
     <plugin name="probe_attach" filename="libgazebo_ros_attacher.so">
       <robotNamespace>/</robotNamespace>
     </plugin>

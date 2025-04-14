@@ -1,23 +1,83 @@
 <?xml version="1.0"?>
+<!-- 
+  描述: FR3机器人带独立探头的启动文件
+  作者: AIRJASON50
+  日期: 2024-04-14
+  
+  此启动文件用于在Gazebo中仿真Franka FR3机器人，并配置独立的力探头末端执行器。
+  机器人被放置在安全的位置(-0.8,0,0)，避免与桌子和软块碰撞。
+  默认使用画圆控制器使机器人末端沿圆周运动。
+  
+  主要修改:
+  1. 调整了机器人位置，远离桌子
+  2. 调整了默认初始关节角度，使姿态更稳定
+  3. 默认加载带软块的世界文件
+  4. 移除了探头位置控制器，改用固定关节连接探头
+  5. 设置圆周运动平面为YZ平面，使圆周运动的轴与地面垂直
+-->
 <launch>
+  <!-- 机器人类型和ID配置 -->
   <arg name="robot" default="fr3" doc="choose your robot. Possible values: [panda, fr3]"/>
   <arg name="arm_id" default="$(arg robot)" />
+  
+  <!-- 末端执行器配置 -->
   <arg name="use_gripper" default="false" doc="Should a franka hand be mounted on the flange?" />
   <arg name="use_probe" default="true" doc="Should a probe end effector be mounted on the flange?" />
   <arg name="probe_tcp_xyz" default="0 0 0.05" doc="Positional offset for probe end effector TCP [m]"/>
   <arg name="probe_tcp_rpy" default="0 0 0" doc="Rotational offset for probe end effector TCP [rad]"/>
-  <arg name="x" default="-0.8" doc="How far forward to place the base of the robot in [m]?" />
+  
+  <!-- 机器人位置和姿态配置 -->
+  <!-- 
+    位置参数说明:
+    x: 控制机器人前后位置 - 负值表示向后(远离桌子)，正值表示向前(靠近桌子)
+       默认值-0.8将机器人放在距离世界原点(桌子位置)后方0.8米处，避免碰撞
+    y: 控制机器人左右位置 - 正值表示向左，负值表示向右
+       默认值0将机器人放在中心线上
+    z: 控制机器人高度 - 通常保持为0，使机器人底座位于地面上
+    
+    姿态参数说明(弧度制):
+    roll: 绕X轴旋转 - 控制机器人前后倾斜
+    pitch: 绕Y轴旋转 - 控制机器人左右倾斜
+    yaw: 绕Z轴旋转 - 控制机器人水平旋转方向
+  -->
+  <arg name="x" default="0" doc="How far forward to place the base of the robot in [m]?" />
   <arg name="y" default="0" doc="How far leftwards to place the base of the robot in [m]?" />
   <arg name="z" default="0" doc="How far upwards to place the base of the robot in [m]?" />
   <arg name="roll" default="0" doc="How much to rotate the base of the robot around its X-axis in [rad]?" />
   <arg name="pitch" default="0" doc="How much to rotate the base of the robot around its Y-axis in [rad]?" />
   <arg name="yaw" default="0" doc="How much to rotate the base of the robot around its Z-axis in [rad]?" />
+  
+  <!-- 仿真环境和可视化配置 -->
   <arg name="world" default="$(find franka_gazebo)/world/empty_with_soft_block.world" doc="Filename to a SDF World for gazebo to use" />
   <arg name="controller" default="circle_controller" doc="Which controller to spawn. Possible values: [joint_position_example_controller, joint_velocity_example_controller, joint_effort_example_controller, cartesian_pose_example_controller, cartesian_velocity_example_controller, cartesian_impedance_example_controller, circle_controller]" />
   <arg name="rviz" default="true" doc="Should RVIz be launched?" />
-  <arg name="initial_joint_positions" default="-J $(arg arm_id)_joint1 0 -J $(arg arm_id)_joint2 -0.3 -J $(arg arm_id)_joint3 0 -J $(arg arm_id)_joint4 -1.8 -J $(arg arm_id)_joint5 0 -J $(arg arm_id)_joint6 1.57 -J $(arg arm_id)_joint7 0.785" doc="Initial joint configuration of the robot"/>
+  
+  <!-- 圆周运动控制器参数 -->
+  <arg name="circle_radius" default="0.03" doc="Radius of the circle in meters"/>
+  <arg name="circle_frequency" default="0.3" doc="Frequency of the circle motion in Hz"/>
+  <arg name="circle_plane" default="yz" doc="Plane of the circle motion (xy, xz, yz)"/>
+  
+  <!-- 初始关节配置 - 已优化以提高稳定性 -->
+  <!-- 
+    initial_joint_positions格式: "-J 关节名称 角度值(弧度) -J 关节名称 角度值(弧度) ..."
+    
+    关节角度说明:
+    joint1: 底座旋转关节 - 0表示机器人面向正前方
+    joint2: 肩部关节 - -0.3(约-17度)使手臂略微前倾，比默认值-0.78更稳定
+    joint3: 上臂旋转关节 - 0表示上臂不旋转
+    joint4: 肘部关节 - -1.8(约-103度)使前臂向下弯曲，形成一个较大的工作空间
+    joint5: 前臂旋转关节 - 0表示前臂不旋转
+    joint6: 手腕关节 - 1.57(约90度)使末端执行器向下，便于探头接触物体
+    joint7: 末端旋转关节 - 0.785(约45度)调整探头方向，提高稳定性
+    
+    这些角度经过优化，目的是:
+    1. 减少关节角度过大导致的力矩问题
+    2. 避免奇异点配置
+    3. 使探头能自然接触软块表面
+  -->
+  <arg name="initial_joint_positions" default="-J $(arg arm_id)_joint1 0 -J $(arg arm_id)_joint2 -0.2 -J $(arg arm_id)_joint3 0 -J $(arg arm_id)_joint4 -1.6 -J $(arg arm_id)_joint5 0 -J $(arg arm_id)_joint6 1.4 -J $(arg arm_id)_joint7 0.785" doc="Initial joint configuration of the robot"/>
 
-  <!-- 直接使用robot.launch加载机器人和探头 -->
+  <!-- 使用robot.launch加载机器人和探头 -->
   <include file="$(find franka_gazebo)/launch/robot.launch">
     <arg name="robot" value="$(arg robot)" />
     <arg name="arm_id" value="$(arg arm_id)" />
@@ -36,4 +96,33 @@
     <arg name="rviz" value="$(arg rviz)" />
     <arg name="initial_joint_positions" value="$(arg initial_joint_positions)" />
   </include>
+  
+  <!-- 设置圆周运动控制器参数 -->
+  <group if="$(eval arg('controller') == 'circle_controller')">
+    <rosparam param="circle_radius" subst_value="true">$(arg circle_radius)</rosparam>
+    <rosparam param="circle_frequency" subst_value="true">$(arg circle_frequency)</rosparam>
+    <rosparam param="circle_plane" subst_value="true">$(arg circle_plane)</rosparam>
+  </group>
+  
+  <!-- 修改圆周运动控制器参数，确保圆周运动严格在YZ平面上进行 -->
+  <param name="circle_controller/radius" value="$(arg circle_radius)" />
+  <param name="circle_controller/frequency" value="$(arg circle_frequency)" />
+  <param name="circle_controller/plane" value="$(arg circle_plane)" />
+  <param name="circle_controller/center_x" value="0.4" />
+  <param name="circle_controller/center_y" value="0.0" />
+  <param name="circle_controller/center_z" value="0.505" />
+  
+  <!-- 启动力传感数据记录脚本 -->
+  <node name="force_data_recorder" pkg="franka_gazebo" type="record_force_data.py" output="screen">
+    <param name="arm_id" value="$(arg arm_id)" />
+    <param name="save_path" value="$(find franka_gazebo)/data/force_data" />
+  </node>
+  
+  <!-- 启动探头位置检测脚本 -->
+  <node name="contact_checker" pkg="franka_gazebo" type="check_contact.py" output="screen">
+    <param name="arm_id" value="$(arg arm_id)" />
+    <param name="soft_block_x" value="0.4" />
+    <param name="soft_block_y" value="0.0" />
+    <param name="soft_block_z" value="0.505" />
+  </node>
 </launch> 
