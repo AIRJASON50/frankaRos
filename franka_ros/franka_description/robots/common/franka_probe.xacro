@@ -1,0 +1,102 @@
+<?xml version="1.0" encoding="utf-8"?>
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="probe">
+  <!-- 探头模型定义 -->
+  <xacro:macro name="franka_probe" params="connected_to:='' arm_id:='panda' rpy:='0 0 0' xyz:='0 0 0' tcp_xyz:='0 0 0.05' tcp_rpy:='0 0 0' safety_distance:=0 gazebo:=false description_pkg:=franka_description">
+    <xacro:unless value="${connected_to == ''}">
+      <!-- 使用与finger_joint类似的名称和类型 -->
+      <joint name="${arm_id}_probe_finger_joint" type="prismatic">
+        <parent link="${connected_to}" />
+        <child link="${arm_id}_probe" />
+        <!-- 所有情况下使用给定的位置和方向 -->
+        <origin xyz="${xyz}" rpy="${rpy}" />
+        <!-- 设置为固定的prismatic关节，移动范围为0 -->
+        <axis xyz="0 0 1" />
+        <limit effort="100" lower="0.0" upper="0.0" velocity="0.2" />
+        <dynamics damping="0.3" />
+      </joint>
+    </xacro:unless>
+
+    <link name="${arm_id}_probe">
+      <visual>
+        <geometry>
+          <mesh filename="package://${description_pkg}/meshes/probe/probe.stl" scale="0.001 0.001 0.001"/>
+        </geometry>
+        <material name="red">
+          <color rgba="1 0 0 1" />
+        </material>
+        <!-- 调整视觉模型的位置，使Z轴上表面与关节表面对齐 -->
+        <!-- STL模型的X范围：0.37-85.87，Y范围：0.64-102.12，Z范围：0-114 -->
+        <!-- 中心点约为X=43，Y=51，Z=57，但我们需要Z轴上表面对齐 -->
+        <origin xyz="-0.043 -0.051 -0.0" rpy="0 0 0" />
+      </visual>
+      <collision>
+        <geometry>
+          <mesh filename="package://${description_pkg}/meshes/probe/probe.stl" scale="0.001 0.001 0.001"/>
+        </geometry>
+        <origin xyz="-0.043 -0.051 -0.0" rpy="0 0 0" />
+        <!-- 添加碰撞属性，提高接触精度 -->
+        <surface>
+          <contact>
+            <ode>
+              <kp>5000000.0</kp>
+              <kd>500.0</kd>
+              <max_vel>0.1</max_vel>
+              <min_depth>0.0001</min_depth>
+            </ode>
+          </contact>
+          <friction>
+            <ode>
+              <mu>0.2</mu>
+              <mu2>0.2</mu2>
+            </ode>
+          </friction>
+        </surface>
+      </collision>
+      <inertial>
+        <!-- 原始质量：钢的密度约为7850 kg/m³，假设探头体积约为0.05×0.05×0.1=0.00025 m³ -->
+        <!-- 降低重量以减轻对控制器的负担 -->
+        <mass value="0.5" />
+        <!-- 降低相应的惯性矩阵值 -->
+        <inertia ixx="0.0002" ixy="0" ixz="0" iyy="0.0002" iyz="0" izz="0.0001" />
+        <origin xyz="-0.043 -0.051 -0.0" rpy="0 0 0" />
+      </inertial>
+    </link>
+
+    <!-- 定义探头TCP点，与末端执行器坐标系对齐 -->
+    <link name="${arm_id}_probe_tcp" />
+    <joint name="${arm_id}_probe_tcp_joint" type="fixed">
+      <origin xyz="${tcp_xyz}" rpy="${tcp_rpy}" />
+      <parent link="${arm_id}_probe" />
+      <child link="${arm_id}_probe_tcp" />
+    </joint>
+
+    <!-- Gazebo特定标签 -->
+    <xacro:if value="${gazebo}">
+      <gazebo reference="${arm_id}_probe">
+        <material>Gazebo/SteelBrushed</material>
+        <!-- 光滑钢材料的摩擦系数较低 -->
+        <mu1>0.2</mu1>
+        <mu2>0.2</mu2>
+        <!-- 增加刚度和阻尼，模拟硬质钢材料 -->
+        <kp>5000000.0</kp>
+        <kd>500.0</kd>
+        <!-- 设置为物理独立，使其在Gazebo中显示为单独模型 -->
+        <selfCollide>true</selfCollide>
+        <provideFeedback>true</provideFeedback>
+        <!-- 设置金属表面特性 -->
+        <maxContacts>20</maxContacts>
+      </gazebo>
+      
+      <!-- 使用与finger_joint类似的名称 -->
+      <transmission name="${arm_id}_probe_finger_joint_transmission">
+        <type>transmission_interface/SimpleTransmission</type>
+        <joint name="${arm_id}_probe_finger_joint">
+          <hardwareInterface>hardware_interface/EffortJointInterface</hardwareInterface>
+        </joint>
+        <actuator name="${arm_id}_probe_finger_joint_motor">
+          <hardwareInterface>hardware_interface/EffortJointInterface</hardwareInterface>
+        </actuator>
+      </transmission>
+    </xacro:if>
+  </xacro:macro>
+</robot> 

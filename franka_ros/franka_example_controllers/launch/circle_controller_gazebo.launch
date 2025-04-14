@@ -1,0 +1,29 @@
+<?xml version="1.0"?>
+<launch>
+  <arg name="robot" default="panda" doc="Which robot to spawn (one of {panda,fr3})" />
+  <arg name="arm_id" default="$(arg robot)" doc="Name of the robot to spawn" />
+  <arg name="use_gripper" default="true" doc="Should a franka hand be mounted on the flange?" />
+  <arg name="x" default="0" doc="How far forward to place the base of the robot in [m]?" />
+  <arg name="y" default="0" doc="How far leftwards to place the base of the robot in [m]?" />
+  <arg name="z" default="0" doc="How far upwards to place the base of the robot in [m]?" />
+  <arg name="roll" default="0" doc="How much to rotate the base of the robot around its X-axis in [rad]?" />
+  <arg name="pitch" default="0" doc="How much to rotate the base of the robot around its Y-axis in [rad]?" />
+  <arg name="yaw" default="0" doc="How much to rotate the base of the robot around its Z-axis in [rad]?" />
+  <arg name="world" default="worlds/empty.world" doc="Filename to a SDF World for gazebo to use" />
+  <arg name="rviz" default="true" doc="Should RVIz be launched?" />
+
+  <include file="$(find franka_gazebo)/launch/robot.launch">
+    <arg name="robot" value="$(arg robot)" />
+    <arg name="arm_id" value="$(arg arm_id)" />
+    <arg name="use_gripper" value="$(arg use_gripper)" />
+    <arg name="x" value="$(arg x)" />
+    <arg name="y" value="$(arg y)" />
+    <arg name="z" value="$(arg z)" />
+    <arg name="roll" value="$(arg roll)" />
+    <arg name="pitch" value="$(arg pitch)" />
+    <arg name="yaw" value="$(arg yaw)" />
+    <arg name="world" value="$(arg world)" />
+    <arg name="rviz" value="$(arg rviz)" />
+    <arg name="controller" value="circle_controller" />
+  </include>
+</launch> 

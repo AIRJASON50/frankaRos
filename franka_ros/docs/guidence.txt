@@ -1,0 +1,1 @@
+roslaunch franka_gazebo fr3.launch x:=-0.5 world:=$(rospack find franka_gazebo)/world/empty_with_soft_block.world controller:=circle_controller use_gripper:=false sphere_ee:=true rviz:=true

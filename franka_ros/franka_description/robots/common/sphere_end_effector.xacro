@@ -1,0 +1,62 @@
+<?xml version='1.0' encoding='utf-8'?>
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro">
+  <xacro:macro name="sphere_end_effector" params="arm_id connected_to tcp_xyz:='0 0 0.05' tcp_rpy:='0 0 0' gazebo:=false">
+    <!-- 末端执行器参数 -->
+    <xacro:property name="probe_mass" value="0.1" />
+    
+    <!-- 探头连接到机械臂 -->
+    <joint name="${arm_id}_sphere_joint" type="fixed">
+      <parent link="${connected_to}" />
+      <child link="${arm_id}_probe_link" />
+      <!-- 现在连接到link7，需要考虑joint8的位置偏移(0 0 0.107) -->
+      <origin xyz="0 0 0.107" rpy="0 0 0" />
+    </joint>
+    
+    <!-- 探头链接 -->
+    <link name="${arm_id}_probe_link">
+      <visual>
+        <geometry>
+          <mesh filename="package://franka_description/meshes/probe/probe.stl" scale="0.001 0.001 0.001"/>
+        </geometry>
+        <material name="red">
+          <color rgba="1 0 0 1" />
+        </material>
+        <!-- 调整视觉模型的位置，使探头尖端朝向正确方向 -->
+        <!-- STL模型的X范围：0.37-85.87，Y范围：0.64-102.12，Z范围：0-114 -->
+        <!-- 中心点约为X=43，Y=51，Z=57 -->
+        <origin xyz="-0.043 -0.051 -0.057" rpy="0 0 0" />
+      </visual>
+      <collision>
+        <geometry>
+          <mesh filename="package://franka_description/meshes/probe/probe.stl" scale="0.001 0.001 0.001"/>
+        </geometry>
+        <origin xyz="-0.043 -0.051 -0.057" rpy="0 0 0" />
+      </collision>
+      <inertial>
+        <mass value="${probe_mass}" />
+        <inertia ixx="0.00001" ixy="0" ixz="0" iyy="0.00001" iyz="0" izz="0.00001" />
+        <origin xyz="-0.043 -0.051 -0.057" rpy="0 0 0" />
+      </inertial>
+    </link>
+    
+    <!-- 末端执行器TCP -->
+    <joint name="${arm_id}_sphere_tcp_joint" type="fixed">
+      <parent link="${arm_id}_probe_link" />
+      <child link="${arm_id}_sphere_tcp" />
+      <origin xyz="${tcp_xyz}" rpy="${tcp_rpy}" />
+    </joint>
+    
+    <link name="${arm_id}_sphere_tcp" />
+    
+    <!-- Gazebo特定标签 -->
+    <xacro:if value="${gazebo}">
+      <gazebo reference="${arm_id}_probe_link">
+        <material>Gazebo/Red</material>
+        <mu1>0.8</mu1>
+        <mu2>0.8</mu2>
+        <kp>1000000</kp>
+        <kd>100</kd>
+      </gazebo>
+    </xacro:if>
+  </xacro:macro>
+</robot> 
