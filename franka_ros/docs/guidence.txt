@@ -128,3 +128,41 @@ franka_ros/                     # 项目根目录
 3. 机械臂与桌子碰撞
    解决方法: 调整机械臂位置参数 `x:=-0.8 y:=0.3`
 
+## 2024年0415更新 - 软块接触检测和力传感器数据记录
+
+### 新增功能
+1. 添加软块接触检测功能:
+   - 新增check_contact.py脚本，实时检测探头与软块的距离
+   - 添加check_contact.launch启动文件
+   - 配置contact_checker_logging.conf日志文件
+
+2. 添加力传感器数据记录功能:
+   - 新增record_force_data.py脚本，记录六维力传感器数据
+   - 支持实时显示力数据曲线
+   - 自动保存数据到CSV文件
+
+3. 优化圆形运动控制器:
+   - 修改circle_controller.cpp，支持选择运动平面
+   - 默认设置为YZ平面运动，确保垂直于地面
+   - 添加中心点参数配置
+
+### 使用说明
+1. 启动带软块接触检测的仿真:
+   ```
+   roslaunch franka_gazebo check_contact.launch
+   ```
+
+2. 记录力传感器数据:
+   ```
+   roslaunch franka_gazebo fr3_with_independent_probe.launch
+   ```
+   然后运行:
+   ```
+   python3 $(rospack find franka_gazebo)/scripts/record_force_data.py
+   ```
+   按's'开始记录，按'q'停止记录
+
+3. 自定义圆形运动参数:
+   ```
+   roslaunch franka_gazebo fr3_with_independent_probe.launch circle_radius:=0.1 circle_frequency:=0.3 circle_plane:=yz
+   ```
