@@ -1,0 +1,38 @@
+<?xml version="1.0" ?>
+<launch>
+  <!-- 加载机器人和软体块模型到Gazebo -->
+  <include file="$(find franka_gazebo)/launch/fr3_with_independent_probe.launch">
+    <arg name="controller" value="circle_controller" />
+    <arg name="x" default="0"/>
+    <arg name="y" default="0"/>
+    <arg name="z" default="0"/>
+    <arg name="world" default="$(find franka_gazebo)/world/empty_with_soft_block.world"/>
+    <arg name="rviz" value="false"/> <!-- 不启动默认的rviz，我们将使用自定义配置 -->
+  </include>
+  
+  <!-- 加载接触模型参数 -->
+  <rosparam command="load" file="$(find franka_example_controllers)/config/circle_controller_with_contact.yaml" />
+  
+  <!-- 启动RViz用于可视化接触标记 -->
+  <node pkg="rviz" type="rviz" name="contact_visualization_rviz" args="-d $(find franka_gazebo)/launch/rviz/fr3_contact_visualization.rviz" required="true" />
+  
+  <!-- 启动rqt_plot监控接触力 -->
+  <node name="rqt_force_plot" pkg="rqt_plot" type="rqt_plot" 
+        args="/circle_controller/contact_force/wrench/force/z /franka_state_controller/F_ext/wrench/force/z /circle_controller/target_force" 
+        respawn="true" output="screen" />
+  
+  <!-- 启动rqt_gui用于监控阶段变换 -->
+  <node pkg="rqt_gui" type="rqt_gui" name="rqt_gui" />
+  
+  <!-- 启动接触状态记录器 -->
+  <node pkg="rosbag" type="record" name="contact_recorder" 
+        args="-O $(find franka_example_controllers)/data/contact_data.bag 
+              /circle_controller/contact_force 
+              /circle_controller/control_phase 
+              /circle_controller/equilibrium_pose" />
+  
+  <!-- 添加调试参数，设置输出级别为debug，以便查看更多接触信息 -->
+  <env name="ROSCONSOLE_CONFIG_FILE" 
+       value="$(find franka_gazebo)/config/rosconsole_debug.config" />
+  <param name="soft_contact/debug" type="bool" value="true" />
+</launch> 

@@ -166,3 +166,387 @@ franka_ros/                     # 项目根目录
    ```
    roslaunch franka_gazebo fr3_with_independent_probe.launch circle_radius:=0.1 circle_frequency:=0.3 circle_plane:=yz
    ```
+
+## 2024年0416更新 - 优化圆周运动控制器，实现开环控制
+
+### 更新内容
+1. 优化了`circle_controller.cpp`的控制逻辑:
+   - 实现了基于转轴的圆周运动：使用probe的z轴作为圆周运动的法线
+   - 实现了开环控制方法：使用虚拟阻抗控制而非闭环反馈
+   - 添加了平滑启动过渡：使用余弦函数在5-6秒内平滑过渡
+
+2. 核心算法改进:
+   - 使用初始姿态的z轴作为运动法线：之前使用固定世界坐标系平面
+   - 实现虚拟阻抗算法：计算虚拟力/矩向量，使机械臂"被拉"向期望位置
+   - 增强零空间控制：保持初始关节配置，提高姿态稳定性
+
+3. 新增监控输出:
+   - 实时输出位置误差、z轴偏差等信息
+   - 显示虚拟力/矩向量和关节力矩
+   - 跟踪平滑因子变化
+
+### 性能表现
+- 机械臂能够按照预期执行平滑圆周运动
+- 末端保持稳定姿态，z轴与初始化时的方向一致
+- 实现了平滑过渡，无突然运动或抖动
+
+### 开环控制实现原理
+```cpp
+// 1. 计算虚拟力/矩向量
+virtual_wrench.head(3) << position_d_ - position;  // 位置部分
+// 计算姿态部分
+Eigen::Matrix3d rotation_error = desired_pose_.rotation() * current_pose.rotation().transpose();
+Eigen::AngleAxisd rotation_error_aa(rotation_error);
+virtual_wrench.tail(3) << rotation_error_aa.axis() * rotation_error_aa.angle();
+
+// 2. 应用虚拟刚度
+virtual_wrench.head(3) = stiffness_virtual.topLeftCorner(3, 3) * virtual_wrench.head(3);
+virtual_wrench.tail(3) = stiffness_virtual.bottomRightCorner(3, 3) * virtual_wrench.tail(3);
+
+// 3. 转换为关节力矩
+tau_task << jacobian.transpose() * virtual_wrench;
+```
+
+### 下一步计划
+- 添加碰撞检测功能：探测probe与软块接触
+- 收集力传感器数据：记录碰撞过程中的力数据
+- 实现自适应阻抗控制：根据接触力调整阻抗参数
+
+## 2024年0417更新 - 进一步优化开环控制系统，提高运动稳定性
+
+### 更新内容
+1. 重构了`circle_controller.cpp`的开环控制实现:
+   - 添加了详细注释说明每个模块的功能和原理
+   - 修改了虚拟阻抗参数，提高稳定性：位置刚度100.0，姿态刚度20.0
+   - 增强了z轴朝向控制，确保探头始终保持正确姿态
+
+2. 核心算法优化:
+   - 完善虚拟阻抗控制：使用物理上正确的方法计算虚拟力/力矩
+   - 改进零空间控制：使用初始关节角度作为参考，PD控制器增强稳定性
+   - 增加了力矩变化率限制：防止控制不连续导致机械臂抖动
+
+3. 改进的开环控制工作流程:
+   - 前5秒：稳定初始姿态，记录目标姿态和关节角度
+   - 5-6秒：平滑过渡到圆周运动，使用余弦函数平滑因子
+   - 6秒后：稳定执行圆周运动，同时保持探头姿态不变
+
+4. 增强监控系统:
+   - 每100个周期(约10Hz)输出一次状态信息
+   - 显示位置误差、z轴偏差、虚拟力矩和关节力矩
+   - 添加了注释说明每个监控参数的含义
+
+### 开环控制的实现原理
+开环控制不依赖传感器反馈直接调整控制输出。本系统中使用"虚拟阻抗"方法:
+1. 计算期望位置和当前位置的差值
+2. 将这个差值乘以虚拟刚度矩阵，得到虚拟力/力矩
+3. 使用雅可比矩阵转置(J^T)将笛卡尔空间的力/力矩转换为关节空间的力矩
+4. 添加重力补偿和零空间控制，确保机械臂稳定性
+
+这种方法的优点:
+- 计算简单，计算负载低
+- 无需处理传感器噪声
+- 适合预定轨迹的跟踪任务
+
+缺点:
+- 无法处理外部干扰
+- 定位精度可能较低
+- 需要准确的机器人动力学模型
+
+### 代码示例
+```cpp
+// 开环控制核心计算
+// 1. 计算虚拟力/力矩
+virtual_wrench.head(3) = position_d_ - position;
+Eigen::Matrix3d rotation_error = desired_pose_.rotation() * current_pose.rotation().transpose();
+Eigen::AngleAxisd rotation_error_aa(rotation_error);
+virtual_wrench.tail(3) = rotation_error_aa.axis() * rotation_error_aa.angle();
+
+// 2. 应用虚拟刚度
+virtual_wrench.head(3) = cartesian_stiffness_virtual.topLeftCorner(3, 3) * virtual_wrench.head(3);
+virtual_wrench.tail(3) = cartesian_stiffness_virtual.bottomRightCorner(3, 3) * virtual_wrench.tail(3);
+
+// 3. 计算关节力矩
+tau_task = jacobian.transpose() * virtual_wrench;
+
+// 4. 添加零空间控制和重力补偿
+tau_nullspace = (I - J^T * pinv(J^T)) * (Kp * (q_d - q) - Kd * dq);
+tau_d = tau_task + tau_nullspace + coriolis;
+```
+
+### 后续计划
+- 实现接触力检测算法：使用虚拟力矩与实际力矩的差异检测碰撞
+- 开发力控制功能：在接触检测后自动调整控制策略
+- 添加轨迹优化：基于动力学模型提前计算最优轨迹
+
+## 2024年0418更新 - 添加位置姿态闭环反馈控制，实现混合控制策略
+
+### 更新内容
+1. 修改了`circle_controller.cpp`实现三阶段控制策略:
+   - 0-5秒: 初始化阶段，保持在初始位置
+   - 5-10秒: 开环控制阶段，使用虚拟阻抗方法执行圆周运动
+   - 10-15秒: 闭环控制阶段，使用基于位置姿态误差的反馈控制
+   - 15秒后: 平滑停止阶段，逐渐减小力矩到零
+
+2. 闭环控制实现的核心特点:
+   - 精确位置误差计算: 直接计算当前位置与期望位置之间的差值
+   - 姿态误差计算: 使用四元数差值方法，准确捕捉方向误差
+   - 笛卡尔空间PD控制: 基于位置误差和速度实现阻抗控制
+   - 阻尼比优化: 设置阻尼比为1，确保系统既快速又稳定
+
+3. 功能优化:
+   - 实时监控: 分别输出开环和闭环控制的详细状态信息
+   - 平滑过渡: 各阶段之间无振荡切换
+   - 平稳停止: 系统结束时逐渐减小力矩，避免突然停止
+
+### 闭环控制实现原理
+闭环控制通过实时测量系统状态并与期望状态比较来调整控制输出。具体实现步骤:
+
+1. 误差计算:
+   ```cpp
+   // 位置误差
+   error.head(3) << position - position_d_;
+   
+   // 姿态误差(四元数方法)
+   Eigen::Quaterniond error_quaternion(orientation.inverse() * orientation_d);
+   error.tail(3) << error_quaternion.x(), error_quaternion.y(), error_quaternion.z();
+   ```
+
+2. 控制律:
+   ```cpp
+   // 笛卡尔空间PD控制: -K*x - D*dx
+   tau_task << jacobian.transpose() * 
+             (-cartesian_stiffness_ * error - cartesian_damping_ * (jacobian * dq));
+   ```
+
+3. 零空间控制(保持初始关节配置):
+   ```cpp
+   tau_nullspace << (I - J^T * pinv(J^T)) * (Kp * (q_d - q) - Kd * dq);
+   ```
+
+### 开环控制与闭环控制对比
+| 特点 | 开环控制 (5-10s) | 闭环控制 (10-15s) |
+|------|-----------------|-----------------|
+| 误差处理 | 不直接使用误差调整控制 | 基于误差实时调整控制输出 |
+| 抗干扰能力 | 较弱，无法适应外部干扰 | 较强，能应对一定干扰 |
+| 计算负担 | 较低 | 较高 |
+| 轨迹精度 | 中等 | 高 |
+| 实现复杂度 | 简单 | 复杂 |
+
+### 使用说明
+启动带有混合控制策略的圆周运动:
+```
+roslaunch franka_gazebo fr3_with_independent_probe.launch
+```
+
+可调节参数:
+- `circle_radius`: 圆周半径，默认0.1米
+- `circle_frequency`: 圆周频率，默认0.5Hz
+- `center_x/y/z`: 圆心坐标
+
+观察日志输出，可看到系统在10秒时从开环控制切换到闭环控制，位置误差应该有所减小。
+
+## 2024年0419更新 - 改进控制策略切换，添加平滑过渡机制
+
+### 问题分析
+在实现5～10s开环控制和10～15s闭环控制的过程中，我们发现在10秒时控制模式切换时会出现错误。参考Franka控制接口(FCI)文档(https://frankaemika.github.io/docs/libfranka.html)，这类错误主要是由于控制量的不连续性导致：
+
+1. **速度/加速度不连续错误**：
+   - `cartesian_motion_generator_velocity_discontinuity` (加速度限制违规)
+   - `cartesian_motion_generator_acceleration_discontinuity` (加加速度限制违规)
+
+2. **力矩变化率错误**：
+   - `controller_torque_discontinuity` 错误会在力矩变化率过大时触发
+
+### 解决方案
+我们实现了以下改进机制来解决控制切换问题：
+
+1. **添加平滑过渡阶段(9.5s-10.5s)**：
+   ```cpp
+   // 过渡期计算
+   double transition_factor = (elapsed_time_ - 9.5); // 0到1的过渡
+   tau_d = (1.0 - transition_factor) * tau_d_last_openloop_ + 
+           transition_factor * tau_d_closed_loop;
+   ```
+
+2. **渐进式控制刚度调整**：
+   ```cpp
+   // 渐进增加控制刚度
+   transition_stiffness.topLeftCorner(3, 3) *= transition_factor;
+   transition_stiffness.bottomRightCorner(3, 3) *= transition_factor;
+   ```
+
+3. **误差幅度限制**：
+   ```cpp
+   // 限制误差幅度避免大力矩
+   for (int i = 0; i < 3; i++) {
+     error(i) = std::max(std::min(error(i), 0.1), -0.1);  // 位置误差限制
+     error(i+3) = std::max(std::min(error(i+3), 0.2), -0.2);  // 姿态误差限制
+   }
+   ```
+
+4. **异常处理和监控**：
+   ```cpp
+   try {
+     // 控制代码...
+   } catch (const std::exception& ex) {
+     ROS_ERROR_STREAM("控制过程中发生异常: " << ex.what());
+   }
+   ```
+
+### 控制过渡原理
+根据FCI文档，平滑过渡的关键是限制控制量的导数，主要包括位置/姿态的速度、加速度、加加速度以及力矩的变化率。我们的实现通过以下步骤确保平滑过渡：
+
+1. **存储最后的开环控制力矩**：
+   ```cpp
+   tau_d_last_openloop_ = tau_d; // 保存开环控制最后的力矩值
+   ```
+
+2. **在过渡期执行线性插值**：
+   将开环控制的输出与闭环控制的输出进行加权混合，权重随时间线性变化。
+
+3. **渐进刚度矩阵**：
+   控制刚度从小逐渐增加到目标值，避免突然的大力矩产生。
+
+### 关键代码说明
+新的控制策略包含四个清晰的阶段：
+1. **0-5秒**：初始化阶段，保持静止
+2. **5-9.5秒**：纯开环控制阶段
+3. **9.5-10.5秒**：控制模式平滑过渡阶段
+4. **10.5-15秒**：纯闭环控制阶段
+5. **15秒后**：平滑停止阶段
+
+过渡阶段使用线性权重函数实现控制输出的混合：
+```cpp
+tau_d = (1.0 - t) * tau_openloop + t * tau_closedloop; // t从0到1线性变化
+```
+
+此外，我们在闭环控制中添加了误差限幅机制，防止因过大的误差导致不稳定或过大的控制力矩。
+
+### 使用说明
+使用相同的启动命令，但现在控制过程将更加稳定：
+```
+roslaunch franka_gazebo fr3_with_independent_probe.launch
+```
+
+观察日志输出可以看到9.5至10.5秒之间的过渡状态信息，验证平滑过渡的有效性。
+
+## 2024年0420更新 - 优化闭环控制实现，确保连续圆周运动
+
+### 问题分析
+在之前的实现中，系统在10秒时从开环控制切换到闭环控制时出现问题，导致圆周运动不正常。经分析，主要原因是：
+
+1. **轨迹生成与控制模式耦合**：轨迹生成没有与控制策略完全分离
+2. **姿态表示不一致**：开环和闭环控制中使用了不同的姿态表示方式
+3. **误差限幅过严**：过严的误差限幅导致闭环控制无法有效跟踪轨迹
+
+### 改进措施
+我们对控制器进行了以下优化：
+
+1. **轨迹生成统一**：
+   - 将轨迹规划部分从控制部分完全解耦，确保全过程使用相同的轨迹生成逻辑
+   - 规范化姿态表示，统一使用四元数：`Eigen::Quaterniond orientation_d_`
+
+2. **保持控制连续性**：
+   - 在开环控制中继续使用虚拟阻抗方法
+   - 在闭环控制中使用相同的期望轨迹，仅添加反馈控制
+   - 过渡期间平滑混合两种控制策略的输出
+
+3. **参数调整**：
+   - 允许更大的误差限幅：位置误差±20cm，姿态误差±0.3rad
+   - 保持相同的刚度和阻尼参数，确保控制稳定
+
+4. **增强监控**：
+   - 添加圆周角度输出，便于监控轨迹执行情况
+   - 在过渡期显示更多状态信息
+
+### 实现原理
+关键改进是确保控制模式变化时轨迹保持连续：
+
+```cpp
+// 统一的轨迹生成，适用于所有控制阶段
+double angle = 2.0 * M_PI * circle_frequency_ * (elapsed_time_ - 5.0);
+double smooth_angle = smooth_factor * angle;
+position_d_ = circle_center_ + 
+               circle_radius_ * cos(smooth_angle) * circle_x_axis_ + 
+               circle_radius_ * sin(smooth_angle) * circle_y_axis_;
+orientation_d_ = Eigen::Quaterniond(desired_pose_.rotation());
+```
+
+在过渡期和闭环控制期，使用相同的轨迹作为反馈控制的参考：
+
+```cpp
+// 闭环控制使用相同的期望轨迹
+error.head(3) << position - position_d_;  // 位置误差
+```
+
+### 使用说明
+使用相同的启动命令：
+```
+roslaunch franka_gazebo fr3_with_independent_probe.launch
+```
+
+现在应能观察到：
+1. 5-10秒：机械臂进行平稳的圆周运动（开环控制）
+2. 10-15秒：机械臂继续执行同样的圆周运动，但跟踪精度更高（闭环控制）
+3. 整个过程中圆周运动连续、流畅，没有突变或停顿
+
+## 2024年0421更新 - 实现接触检测与自适应圆周运动控制
+
+### 更新内容
+1. 重构了`circle_controller.cpp`控制逻辑，实现两阶段运动策略:
+   - 阶段一：机械臂向下运动直到接触到软体物块
+   - 阶段二：以接触点为圆心进行圆周运动，保持与软物块接触
+
+2. 接触检测实现:
+   - 读取末端力/力矩传感器数据，检测接触力大小
+   - 基于接触力阈值(5N)和位置接近度(<2cm)判断接触状态
+   - 记录接触点坐标作为后续圆周运动的中心点
+
+3. 控制策略改进:
+   - 移除前5秒等待时间，控制器启动后立即开始向下运动
+   - 整个过程使用闭环反馈控制替代原有的开环控制
+   - 统一误差计算和控制输出方法，确保控制连续性
+   - 在检测到接触后重置时间计数器，平滑过渡到圆周运动阶段
+
+4. 圆周运动优化:
+   - 使用接触点作为圆周运动中心
+   - 保持探头姿态稳定，z轴始终与圆周平面垂直
+   - 实时监测接触力，确保与软体物块保持连续接触
+   - 使用平滑启动因子，避免圆周运动开始时的突变
+
+### 解决的问题
+1. 修复了15秒后机械臂不停止的问题:
+   - 最初使用力矩缩放因子导致控制器无法正确停止
+   - 改为直接设置关节力矩为零，确保正确停止
+
+2. 解决了Circle angle持续增大的疑问:
+   - Circle angle基于时间的连续累积是有意为之的设计
+   - 通过正弦和余弦函数将角度映射到周期性的位置变化
+   - 角度值可用于判断机械臂完成的圆周次数(2π为一圈)
+
+3. 优化了控制器代码组织:
+   - 添加详细注释说明每个阶段的功能和控制原理
+   - 优化调试输出，显示更多有用的状态信息
+   - 增强异常处理，捕获并记录控制过程中的异常
+
+### 使用方法
+启动带有接触检测和圆周运动的仿真:
+```
+roslaunch franka_gazebo fr3_with_independent_probe.launch
+```
+
+控制流程将自动执行:
+1. 机械臂初始化后立即开始向下运动
+2. 接触到软体物块后，在接触点开始执行圆周运动
+3. 整个过程中保持与软体物块的接触
+
+可调参数:
+- `force_threshold_`: 接触力阈值，默认5.0N
+- `circle_radius_`: 圆周半径，默认0.1米
+- `circle_frequency_`: 圆周频率，默认0.5Hz
+
+### 后续计划
+1. 添加力控反馈，根据接触力调整圆周平面高度
+2. 实现多种轨迹模式选择，如圆周、方形、螺旋等
+3. 提高接触检测的稳定性和准确性
+4. 优化与软体物块的交互，模拟不同硬度和形状的软体物体

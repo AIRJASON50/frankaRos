@@ -6,6 +6,7 @@
 #include <mutex>
 #include <string>
 #include <vector>
+#include <fstream>
 
 #include <controller_interface/multi_interface_controller.h>
 #include <geometry_msgs/PoseStamped.h>
@@ -17,6 +18,7 @@
 
 #include <franka_hw/franka_model_interface.h>
 #include <franka_hw/franka_state_interface.h>
+#include <franka_example_controllers/soft_contact_model.h>
 
 namespace franka_example_controllers {
 
@@ -28,6 +30,7 @@ class CircleController : public controller_interface::MultiInterfaceController<
   bool init(hardware_interface::RobotHW* robot_hw, ros::NodeHandle& node_handle) override;
   void starting(const ros::Time&) override;
   void update(const ros::Time&, const ros::Duration& period) override;
+  void stopping(const ros::Time& time) override;
 
  private:
   // Saturation
@@ -59,6 +62,99 @@ class CircleController : public controller_interface::MultiInterfaceController<
   
   // 初始位置（圆周中心）
   Eigen::Vector3d circle_center_;
+
+  // 期望姿态相关
+  bool desired_pose_initialized_ = false;
+  Eigen::Affine3d desired_pose_ = Eigen::Affine3d::Identity();
+  
+  // 圆周运动平面相关
+  Eigen::Vector3d circle_normal_ = Eigen::Vector3d::UnitZ(); // probe坐标系z轴（法线）
+  Eigen::Vector3d circle_x_axis_ = Eigen::Vector3d::UnitX(); // 圆周平面x轴
+  Eigen::Vector3d circle_y_axis_ = Eigen::Vector3d::UnitY(); // 圆周平面y轴
+  
+  // 开环控制相关
+  Eigen::Matrix<double, 7, 1> initial_q_ = Eigen::Matrix<double, 7, 1>::Zero(); // 初始关节角度
+  
+  // 过渡控制相关
+  Eigen::Matrix<double, 7, 1> tau_d_last_openloop_ = Eigen::Matrix<double, 7, 1>::Zero(); // 上一个开环控制周期的力矩
+  
+  // 停止相关
+  bool stop_message_printed_{false}; // 跟踪是否已打印停止消息
+  
+  // 接触检测相关
+  bool contact_detected_{false}; // 是否已经检测到接触
+  Eigen::Vector3d contact_position_; // 接触点位置
+  double force_threshold_{5.0}; // 接触力阈值(N)
+  
+  // 软接触模型和相关状态
+  std::unique_ptr<franka_example_controllers::SoftContactModel> contact_model_;
+  franka_example_controllers::ContactParams contact_params_;
+  franka_example_controllers::ContactState contact_state_;
+  
+  // 接触点位置（软体块表面）
+  Eigen::Vector3d soft_block_position_{0.4, 0.0, 0.505}; // 软体块位置
+  double soft_block_x_{0.4};
+  double soft_block_y_{0.0};
+  double soft_block_z_{0.505};
+  
+  // 接触控制相关
+  enum ControlPhase {
+    APPROACH = 0,   // 接近阶段
+    CONTACT = 1,    // 接触阶段
+    CIRCULAR = 2    // 圆周运动阶段
+  };
+  
+  ControlPhase control_phase_{APPROACH};
+  ros::Time phase_start_time_;
+  double phase_duration_{2.0};  // 每个阶段默认持续时间
+  
+  // 恒力控制参数
+  double target_force_{10.0};
+  double force_error_integral_{0.0};
+  double last_force_error_{0.0};
+  double prev_force_error_{0.0}; // 之前的力误差，用于计算微分项
+  double force_kp_{0.1};
+  double force_ki_{0.01};
+  double force_kd_{0.001};
+  double force_p_gain_{0.1}; // 与force_kp_相同
+  double force_i_gain_{0.01}; // 与force_ki_相同
+  double force_d_gain_{0.001}; // 与force_kd_相同
+  double max_force_{20.0};
+  
+  // 发布接触状态
+  ros::Publisher phase_pub_;
+  ros::Publisher pose_pub_;
+  ros::Publisher contact_pub_; // 发布接触力信息
+  
+  // 添加计数器变量，用于控制调试信息输出频率
+  int circular_counter_{0};
+  
+  // 添加日志记录相关成员变量
+  std::ofstream log_file_;
+  std::string log_file_path_;
+  int log_counter_{0};
+  bool log_initialized_{false};
+  ros::Time start_time_;
+  
+  /**
+   * @brief 初始化日志文件
+   */
+  void initLogFile();
+  
+  /**
+   * @brief 关闭日志文件并记录结束时间
+   */
+  void closeLogFile(const ros::Time& end_time);
+  
+  /**
+   * @brief 记录数据到日志文件
+   * @param time 当前时间
+   * @param position 当前位置
+   * @param force 接触力
+   * @param phase 控制阶段
+   */
+  void logData(const ros::Time& time, const Eigen::Vector3d& position, 
+               const Eigen::Vector3d& force, int phase);
 };
 
 }  // namespace franka_example_controllers 

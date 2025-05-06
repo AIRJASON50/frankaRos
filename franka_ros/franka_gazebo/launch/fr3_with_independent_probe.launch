@@ -47,35 +47,36 @@
   <arg name="pitch" default="0" doc="How much to rotate the base of the robot around its Y-axis in [rad]?" />
   <arg name="yaw" default="0" doc="How much to rotate the base of the robot around its Z-axis in [rad]?" />
   
+
+
+
   <!-- 仿真环境和可视化配置 -->
-  <arg name="world" default="$(find franka_gazebo)/world/empty_with_soft_block.world" doc="Filename to a SDF World for gazebo to use" />
+   <arg name="world" default="$(find franka_gazebo)/world/empty_with_soft_block.world" doc="Filename to a SDF World for gazebo to use" />
+  <!-- <arg name="world" default="worlds/empty.world" doc="Filename to a SDF World for gazebo to use" /> -->
   <arg name="controller" default="circle_controller" doc="Which controller to spawn. Possible values: [joint_position_example_controller, joint_velocity_example_controller, joint_effort_example_controller, cartesian_pose_example_controller, cartesian_velocity_example_controller, cartesian_impedance_example_controller, circle_controller]" />
+  <!-- <arg name="controller" default="cartesian_pose_example_controller" doc="Which controller to spawn. Possible values: [joint_position_example_controller, joint_velocity_example_controller, joint_effort_example_controller, cartesian_pose_example_controller, cartesian_velocity_example_controller, cartesian_impedance_example_controller, circle_controller]" /> -->
+
+
   <arg name="rviz" default="true" doc="Should RVIz be launched?" />
   
   <!-- 圆周运动控制器参数 -->
-  <arg name="circle_radius" default="0.03" doc="Radius of the circle in meters"/>
-  <arg name="circle_frequency" default="0.3" doc="Frequency of the circle motion in Hz"/>
-  <arg name="circle_plane" default="yz" doc="Plane of the circle motion (xy, xz, yz)"/>
+  <arg name="circle_radius" default="0.1" doc="圆周运动半径 [m]"/>
+  <arg name="circle_frequency" default="0.3" doc="圆周运动频率 [Hz]"/>
+  <arg name="circle_plane" default="xy" doc="圆周运动平面 (xy/xz/yz)"/>
+  <arg name="center_x" default="0.8" doc="圆周运动中心点X坐标 [m]"/>
+  <arg name="center_y" default="0.0" doc="圆周运动中心点Y坐标 [m]"/>
+  <arg name="center_z" default="0.3" doc="圆周运动中心点Z坐标 [m]"/>
   
-  <!-- 初始关节配置 - 已优化以提高稳定性 -->
-  <!-- 
-    initial_joint_positions格式: "-J 关节名称 角度值(弧度) -J 关节名称 角度值(弧度) ..."
-    
-    关节角度说明:
-    joint1: 底座旋转关节 - 0表示机器人面向正前方
-    joint2: 肩部关节 - -0.3(约-17度)使手臂略微前倾，比默认值-0.78更稳定
-    joint3: 上臂旋转关节 - 0表示上臂不旋转
-    joint4: 肘部关节 - -1.8(约-103度)使前臂向下弯曲，形成一个较大的工作空间
-    joint5: 前臂旋转关节 - 0表示前臂不旋转
-    joint6: 手腕关节 - 1.57(约90度)使末端执行器向下，便于探头接触物体
-    joint7: 末端旋转关节 - 0.785(约45度)调整探头方向，提高稳定性
-    
-    这些角度经过优化，目的是:
-    1. 减少关节角度过大导致的力矩问题
-    2. 避免奇异点配置
-    3. 使探头能自然接触软块表面
-  -->
-  <arg name="initial_joint_positions" default="-J $(arg arm_id)_joint1 0 -J $(arg arm_id)_joint2 -0.2 -J $(arg arm_id)_joint3 0 -J $(arg arm_id)_joint4 -1.6 -J $(arg arm_id)_joint5 0 -J $(arg arm_id)_joint6 1.4 -J $(arg arm_id)_joint7 0.785" doc="Initial joint configuration of the robot"/>
+  <!-- 初始关节配置 - 使用原版设定，形成90度肘部弯曲的稳定姿态 -->
+  <arg name="initial_joint_positions" 
+       default="-J $(arg arm_id)_joint1 0
+                -J $(arg arm_id)_joint2 -0.785398163
+                -J $(arg arm_id)_joint3 0
+                -J $(arg arm_id)_joint4 -2.35619449
+                -J $(arg arm_id)_joint5 0
+                -J $(arg arm_id)_joint6 1.57079632679
+                -J $(arg arm_id)_joint7 0.785398163397"
+       doc="Initial joint configuration of the robot"/>
 
   <!-- 使用robot.launch加载机器人和探头 -->
   <include file="$(find franka_gazebo)/launch/robot.launch">
@@ -104,13 +105,15 @@
     <rosparam param="circle_plane" subst_value="true">$(arg circle_plane)</rosparam>
   </group>
   
-  <!-- 修改圆周运动控制器参数，确保圆周运动严格在YZ平面上进行 -->
-  <param name="circle_controller/radius" value="$(arg circle_radius)" />
-  <param name="circle_controller/frequency" value="$(arg circle_frequency)" />
-  <param name="circle_controller/plane" value="$(arg circle_plane)" />
-  <param name="circle_controller/center_x" value="0.4" />
-  <param name="circle_controller/center_y" value="0.0" />
-  <param name="circle_controller/center_z" value="0.505" />
+  <!-- 圆形运动控制器参数 -->
+  <group ns="circle_controller">
+    <param name="circle_radius" value="$(arg circle_radius)"/>
+    <param name="circle_frequency" value="$(arg circle_frequency)"/>
+    <param name="circle_plane" value="$(arg circle_plane)"/>
+    <param name="center_x" value="0.5"/>
+    <param name="center_y" value="0.0"/>
+    <param name="center_z" value="0.3"/>
+  </group>
   
   <!-- 启动力传感数据记录脚本 -->
   <node name="force_data_recorder" pkg="franka_gazebo" type="record_force_data.py" output="screen">

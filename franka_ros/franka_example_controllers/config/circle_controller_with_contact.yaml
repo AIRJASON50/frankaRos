@@ -1,0 +1,46 @@
+circle_controller:
+  type: franka_example_controllers/CircleController
+  arm_id: fr3
+  joint_names:
+    - fr3_joint1
+    - fr3_joint2
+    - fr3_joint3
+    - fr3_joint4
+    - fr3_joint5
+    - fr3_joint6
+    - fr3_joint7
+
+  # 圆形运动参数
+  circle_radius: 0.08    # 圆轨迹半径 [m]
+  circle_frequency: 0.3  # 圆轨迹频率 [Hz]
+  circle_plane: xy       # 圆轨迹所在平面 (xy/xz/yz)
+
+  # 软接触模型参数 - 基于Hertz-Hunt-Crossley模型
+  contact_model:
+    young_modulus: 1000.0      # 杨氏模量 [Pa] - EcoFlex材料特性
+    poisson_ratio: 0.45        # 泊松比 - 近似不可压缩
+    friction_coef: 0.3         # 摩擦系数 - Coulomb摩擦模型
+    contact_radius: 0.01       # 接触工具半径 [m] - 圆形探针
+    path_radius: 0.1           # 路径半径 [m] - 圆周运动半径
+    damping: 50.0              # Hunt-Crossley阻尼系数 [Ns/m]
+    force_threshold: 0.5       # 接触力阈值 [N] - 降低以提高灵敏度
+    depth_threshold: 0.0005    # 接触深度阈值 [m] - 降低以捕获微小接触
+
+  # 力控制参数
+  force_controller:
+    target_force: 10.0        # 目标接触力 [N]
+    kp: 0.1                   # 比例增益
+    ki: 0.01                  # 积分增益
+    kd: 0.001                 # 微分增益
+    max_force: 20.0           # 最大力 [N]
+
+  # 相位转换参数
+  phase_duration: 3.0         # 每个阶段持续时间 [s]
+
+  # 参考坐标系
+  reference_frame: world      # 参考坐标系名称
+
+  # 高级参数
+  frequency: 0.5              # 控制频率 [Hz]
+  radius: 0.1                 # 半径 [m]
+  height: 0.5                 # 高度 [m] 
