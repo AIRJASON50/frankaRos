@@ -47,8 +47,8 @@
         <geometry>
           <mesh filename="package://${description_pkg}/meshes/probe/probe.stl" scale="0.001 0.001 0.001"/>
         </geometry>
-        <material name="red">
-          <color rgba="1 0 0 1" />
+        <material name="white">
+          <color rgba="1 1 1 1" />
         </material>
         <!-- 调整视觉模型的位置，使Z轴上表面与关节表面对齐 -->
         <!-- STL模型的X范围：0.37-85.87，Y范围：0.64-102.12，Z范围：0-114 -->
@@ -103,7 +103,7 @@
     <!-- Gazebo仿真特定参数 -->
     <xacro:if value="${gazebo}">
       <gazebo reference="${arm_id}_probe">
-        <material>Gazebo/SteelBrushed</material>
+        <material>Gazebo/White</material>
         <!-- 光滑钢材料的摩擦系数较低 -->
         <mu1>0.2</mu1>
         <mu2>0.2</mu2>

@@ -20,17 +20,17 @@ franka_ros/
 ├── franka_example_controllers/             # 主控制器包
 │   ├── include/franka_example_controllers/
 │   │   ├── circle_controller.h             # 轨迹控制器（含软接触交互）
-│   │   ├── trajectory_generator.h          # 【待添加】轨迹生成器
+│   │   ├── trajectory_generator.h          # 轨迹生成器
 │   │   └── soft_contact_model.h            # 软接触模型
 │   ├── src/
 │   │   ├── circle_controller.cpp           # 轨迹控制器实现
-│   │   ├── trajectory_generator.cpp        # 【待添加】轨迹生成器实现
+│   │   ├── trajectory_generator.cpp        # 轨迹生成器实现
 │   │   └── soft_contact_model.cpp          # 软接触模型实现
 │   ├── config/
-│   │   ├── trajectory_controller.yaml      # 【待添加】通用轨迹控制器配置
+│   │   ├── trajectory_controller.yaml      # 通用轨迹控制器配置
 │   │   └── soft_contact_params.yaml        # 软接触模型参数
 │   ├── launch/
-│   │   ├── fr3_custom_trajectory.launch    # 【待添加】自定义轨迹启动
+│   │   ├── fr3_custom_trajectory.launch    # 自定义轨迹启动
 │   │   └── fr3_with_soft_contact.launch    # 软接触测试启动
 ├── franka_gazebo/                          # 仿真环境包
 │   ├── logs/                               # 日志文件夹
@@ -150,20 +150,23 @@ time,phase,pos_x,pos_y,pos_z,force_x,force_y,force_z,force_magnitude,depth,targe
 - ✅ 恒定力控制
 - ✅ 圆周轨迹跟踪
 - ✅ 数据记录系统
+- ✅ 完整轨迹路径可视化系统
+- ✅ 轨迹预测与延迟补偿（50ms预测 + 10ms前馈）
+- ✅ 探头颜色优化（从红色改为白色，提高可视性）
 
-### 阶段2：轨迹系统扩展（下一步重点）
+### 阶段2：轨迹系统扩展（已完成大部分）
 
 #### 任务2.1：通用轨迹生成器
-- [ ] 实现轨迹生成器接口
-  - [ ] 添加直线轨迹生成
-  - [ ] 添加正方形轨迹生成
-  - [ ] 添加自定义路径跟踪（从文件读取）
-- [ ] 修改控制器支持动态轨迹切换
-- [ ] 添加轨迹参数通过ROS参数服务器配置
+- ✅ 实现轨迹生成器接口
+  - ✅ 添加直线轨迹生成
+  - ✅ 添加正方形轨迹生成
+  - ✅ 添加自定义路径跟踪（从文件读取）
+- ✅ 修改控制器支持动态轨迹切换
+- ✅ 添加轨迹参数通过ROS参数服务器配置
 
 #### 任务2.2：动态力控制
 - [ ] 实现力轨迹生成器
-  - [ ] 支持恒定力
+  - ✅ 支持恒定力
   - [ ] 支持正弦变化力
   - [ ] 支持阶跃力变化
 - [ ] 实现力变化与位置轨迹的同步
@@ -244,3 +247,15 @@ double force_error = target_force_current - current_contact_state.contact_force;
 - 实现多点接触控制
 - 添加触觉反馈和材料识别
 - 开发图形用户界面，便于轨迹设计和参数调整 
+
+## 9. 更新日志
+
+### 2024-05-XX
+- 实现了自定义轨迹生成器接口
+- 添加了多种轨迹类型支持（直线、矩形、八字形）
+- 添加了从文件读取自定义路径功能
+- 优化了轨迹可视化，实现历史轨迹点(100个)和未来预测点(200个)显示
+- 添加了50ms轨迹预测减少跟踪延迟
+- 改进了力控制参数，提高了响应速度
+- 将探头颜色从红色改为白色，提高可视性
+- 所有代码已上传至GitHub仓库
