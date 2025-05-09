@@ -1,5 +1,54 @@
 <?xml version="1.0" ?>
+<!-- 
+  描述: FR3机器人软接触仿真启动文件
+  作者: AIRJASON50
+  
+  此启动文件用于在Gazebo中仿真Franka FR3机器人与软体块的交互，实现带力控制的轨迹跟踪。
+  支持多种轨迹类型：
+  - 圆形轨迹（circular）：默认，可设置半径和频率
+  - 矩形轨迹（rectangular）：可设置长度和宽度
+  - 八字形轨迹（figure_eight）：可设置X轴和Y轴半径
+  - 直线往返轨迹（line）：可设置直线长度
+  - 自定义轨迹（custom）：可指定轨迹文件
+  
+  使用示例：
+  1. 圆形轨迹：
+     roslaunch franka_gazebo fr3_with_soft_contact.launch trajectory_type:=circular circle_radius:=0.1
+  2. 矩形轨迹：
+     roslaunch franka_gazebo fr3_with_soft_contact.launch trajectory_type:=rectangular rect_length:=0.2 rect_width:=0.1
+  3. 八字形轨迹：
+     roslaunch franka_gazebo fr3_with_soft_contact.launch trajectory_type:=figure_eight eight_radius_x:=0.1 eight_radius_y:=0.05
+  4. 直线轨迹：
+     roslaunch franka_gazebo fr3_with_soft_contact.launch trajectory_type:=line line_length:=0.2
+-->
 <launch>
+  <!-- 轨迹类型和参数配置 -->
+  <arg name="trajectory_type" default="circular" doc="轨迹类型 (circular/rectangular/figure_eight/line/custom)"/>
+  
+  <!-- 通用轨迹参数 -->
+  <arg name="circle_frequency" default="0.3" doc="轨迹运动频率 [Hz]"/>
+  <arg name="center_x" default="0.4" doc="轨迹中心点X坐标 [m]"/>
+  <arg name="center_y" default="0.0" doc="轨迹中心点Y坐标 [m]"/>
+  <arg name="center_z" default="0.505" doc="轨迹中心点Z坐标 [m]"/>
+  
+  <!-- 圆形轨迹参数 -->
+  <arg name="circle_radius" default="0.1" doc="圆周运动半径 [m]"/>
+  <arg name="circle_plane" default="xy" doc="圆周运动平面 (xy/xz/yz)"/>
+  
+  <!-- 矩形轨迹参数 -->
+  <arg name="rect_length" default="0.2" doc="矩形长度 [m]"/>
+  <arg name="rect_width" default="0.1" doc="矩形宽度 [m]"/>
+  
+  <!-- 八字形轨迹参数 -->
+  <arg name="eight_radius_x" default="0.1" doc="八字形X轴半径 [m]"/>
+  <arg name="eight_radius_y" default="0.05" doc="八字形Y轴半径 [m]"/>
+  
+  <!-- 直线轨迹参数 -->
+  <arg name="line_length" default="0.2" doc="直线长度 [m]"/>
+  
+  <!-- 自定义轨迹参数 -->
+  <arg name="custom_trajectory_file" default="" doc="自定义轨迹文件路径"/>
+
   <!-- 加载机器人和软体块模型到Gazebo -->
   <include file="$(find franka_gazebo)/launch/fr3_with_independent_probe.launch">
     <arg name="controller" value="circle_controller" />
@@ -8,6 +57,21 @@
     <arg name="z" default="0"/>
     <arg name="world" default="$(find franka_gazebo)/world/empty_with_soft_block.world"/>
     <arg name="rviz" value="false"/> <!-- 不启动默认的rviz，我们将使用自定义配置 -->
+    
+    <!-- 传递轨迹参数 -->
+    <arg name="trajectory_type" value="$(arg trajectory_type)"/>
+    <arg name="circle_frequency" value="$(arg circle_frequency)"/>
+    <arg name="circle_radius" value="$(arg circle_radius)"/>
+    <arg name="circle_plane" value="$(arg circle_plane)"/>
+    <arg name="center_x" value="$(arg center_x)"/>
+    <arg name="center_y" value="$(arg center_y)"/>
+    <arg name="center_z" value="$(arg center_z)"/>
+    <arg name="rect_length" value="$(arg rect_length)"/>
+    <arg name="rect_width" value="$(arg rect_width)"/>
+    <arg name="eight_radius_x" value="$(arg eight_radius_x)"/>
+    <arg name="eight_radius_y" value="$(arg eight_radius_y)"/>
+    <arg name="line_length" value="$(arg line_length)"/>
+    <arg name="custom_trajectory_file" value="$(arg custom_trajectory_file)"/>
   </include>
   
   <!-- 加载接触模型参数 -->

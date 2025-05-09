@@ -22,6 +22,14 @@
 
 namespace franka_example_controllers {
 
+/**
+ * @brief 轨迹点结构，用于自定义轨迹
+ */
+struct TrajectoryPoint {
+  double time;
+  Eigen::Vector3d position;
+};
+
 class CircleController : public controller_interface::MultiInterfaceController<
                                                 franka_hw::FrankaModelInterface,
                                                 hardware_interface::EffortJointInterface,
@@ -33,6 +41,26 @@ class CircleController : public controller_interface::MultiInterfaceController<
   void stopping(const ros::Time& time) override;
 
  private:
+  // 轨迹类型枚举
+  enum TrajectoryType {
+    CIRCULAR = 0,    // 圆形轨迹
+    RECTANGULAR = 1, // 矩形轨迹
+    FIGURE_EIGHT = 2,// 八字形轨迹
+    LINE = 3,        // 直线往返轨迹
+    CUSTOM = 4       // 自定义轨迹
+  };
+
+  // 轨迹生成函数
+  Eigen::Vector3d generateTrajectory(double time);
+  Eigen::Vector3d generateCircularTrajectory(double time);
+  Eigen::Vector3d generateRectangularTrajectory(double time);
+  Eigen::Vector3d generateFigureEightTrajectory(double time);
+  Eigen::Vector3d generateLineTrajectory(double time);
+  Eigen::Vector3d generateCustomTrajectory(double time);
+  
+  // 加载自定义轨迹
+  bool loadCustomTrajectory(const std::string& filename);
+
   // Saturation
   Eigen::Matrix<double, 7, 1> saturateTorqueRate(
       const Eigen::Matrix<double, 7, 1>& tau_d_calculated,
@@ -42,11 +70,29 @@ class CircleController : public controller_interface::MultiInterfaceController<
   std::unique_ptr<franka_hw::FrankaModelHandle> model_handle_;
   std::vector<hardware_interface::JointHandle> joint_handles_;
 
+  // 轨迹类型
+  TrajectoryType trajectory_type_{CIRCULAR};
+  
   // 圆周运动参数
   double circle_radius_{0.1};  // 圆周半径（米）
   double circle_frequency_{0.5};  // 圆周运动频率（Hz）
   double elapsed_time_{0.0};  // 已经过的时间（秒）
   std::string circle_plane_{"yz"};  // 圆周运动平面，可选值: "xy", "xz", "yz"，默认为"yz"（垂直于地面）
+  
+  // 矩形轨迹参数
+  double rect_length_{0.2};    // 矩形长度
+  double rect_width_{0.1};     // 矩形宽度
+  
+  // 八字形轨迹参数
+  double eight_radius_x_{0.1};  // 八字形X轴半径
+  double eight_radius_y_{0.05}; // 八字形Y轴半径
+  
+  // 直线轨迹参数
+  double line_length_{0.2};    // 直线长度
+  
+  // 自定义轨迹参数
+  std::string custom_trajectory_file_; // 自定义轨迹文件路径
+  std::vector<TrajectoryPoint> custom_trajectory_points_; // 自定义轨迹点
   
   // 控制参数
   double filter_params_{0.005};
@@ -101,7 +147,7 @@ class CircleController : public controller_interface::MultiInterfaceController<
   enum ControlPhase {
     APPROACH = 0,   // 接近阶段
     CONTACT = 1,    // 接触阶段
-    CIRCULAR = 2    // 圆周运动阶段
+    TRAJECTORY = 2    // 轨迹运动阶段（原CIRCULAR）
   };
   
   ControlPhase control_phase_{APPROACH};

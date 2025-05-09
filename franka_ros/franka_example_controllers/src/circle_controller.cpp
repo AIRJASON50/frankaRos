@@ -54,7 +54,7 @@ void CircleController::initLogFile() {
       log_file_ << "# 实验开始时间: " << std::fixed << std::setprecision(6) 
                 << start_time_.toSec() << " 秒" << std::endl;
       log_file_ << "# 本地时间: " << time_str << std::endl;
-      log_file_ << "# 控制阶段说明: 0=APPROACH, 1=CONTACT, 2=CIRCULAR" << std::endl;
+      log_file_ << "# 控制阶段说明: 0=APPROACH, 1=CONTACT, 2=TRAJECTORY" << std::endl;
       log_file_ << "# 软块物理属性: 杨氏模量=" << contact_params_.young_modulus 
                 << "Pa, 泊松比=" << contact_params_.poisson_ratio << std::endl;
       log_file_ << "# 目标力: " << target_force_ << "N" << std::endl;
@@ -145,6 +145,216 @@ void CircleController::stopping(const ros::Time& time) {
   closeLogFile(time);
 }
 
+// 轨迹生成函数 - 根据当前轨迹类型生成目标位置
+Eigen::Vector3d CircleController::generateTrajectory(double time) {
+  switch (trajectory_type_) {
+    case CIRCULAR:
+      return generateCircularTrajectory(time);
+    case RECTANGULAR:
+      return generateRectangularTrajectory(time);
+    case FIGURE_EIGHT:
+      return generateFigureEightTrajectory(time);
+    case LINE:
+      return generateLineTrajectory(time);
+    case CUSTOM:
+      return generateCustomTrajectory(time);
+    default:
+      return generateCircularTrajectory(time);
+  }
+}
+
+// 生成圆形轨迹
+Eigen::Vector3d CircleController::generateCircularTrajectory(double time) {
+  // 计算当前角度
+  double angle = 2.0 * M_PI * circle_frequency_ * time;
+  
+  // 平滑启动：在运动开始的第一秒内使用余弦函数平滑过渡
+  double smooth_factor = 1.0;
+  if (time < 1.0) {
+    smooth_factor = 0.5 * (1.0 - std::cos(M_PI * time));
+  }
+  double smooth_angle = smooth_factor * angle;  // 应用平滑因子到角度
+  
+  // 生成圆形轨迹点
+  return circle_center_ + 
+         circle_radius_ * cos(smooth_angle) * circle_x_axis_ + 
+         circle_radius_ * sin(smooth_angle) * circle_y_axis_;
+}
+
+// 生成矩形轨迹
+Eigen::Vector3d CircleController::generateRectangularTrajectory(double time) {
+  // 计算一个完整矩形的周期时间
+  double period = 1.0 / circle_frequency_; 
+  // 将时间归一化到0-1之间，表示一个周期内的相对位置
+  double normalized_time = fmod(time, period) / period;
+  
+  // 平滑启动：在运动开始的第一秒内使用余弦函数平滑过渡
+  double smooth_factor = 1.0;
+  if (time < 1.0) {
+    smooth_factor = 0.5 * (1.0 - std::cos(M_PI * time));
+    // 如果在平滑阶段，限制在第一条边
+    normalized_time = normalized_time * 0.25;
+  }
+  
+  // 矩形的四条边
+  if (normalized_time < 0.25) {
+    // 第一条边：从左下到右下
+    double t = normalized_time * 4.0;
+    return circle_center_ + 
+           smooth_factor * ((t * rect_length_ - rect_length_/2) * circle_x_axis_ - 
+           (rect_width_/2) * circle_y_axis_);
+  } else if (normalized_time < 0.5) {
+    // 第二条边：从右下到右上
+    double t = (normalized_time - 0.25) * 4.0;
+    return circle_center_ + 
+           smooth_factor * ((rect_length_/2) * circle_x_axis_ + 
+           (t * rect_width_ - rect_width_/2) * circle_y_axis_);
+  } else if (normalized_time < 0.75) {
+    // 第三条边：从右上到左上
+    double t = (normalized_time - 0.5) * 4.0;
+    return circle_center_ + 
+           smooth_factor * ((1-t) * rect_length_ - rect_length_/2) * circle_x_axis_ + 
+           smooth_factor * (rect_width_/2) * circle_y_axis_;
+  } else {
+    // 第四条边：从左上到左下
+    double t = (normalized_time - 0.75) * 4.0;
+    return circle_center_ + 
+           smooth_factor * (-rect_length_/2) * circle_x_axis_ + 
+           smooth_factor * ((1-t) * rect_width_ - rect_width_/2) * circle_y_axis_;
+  }
+}
+
+// 生成八字形轨迹
+Eigen::Vector3d CircleController::generateFigureEightTrajectory(double time) {
+  // 计算当前角度
+  double angle = 2.0 * M_PI * circle_frequency_ * time;
+  
+  // 平滑启动：在运动开始的第一秒内使用余弦函数平滑过渡
+  double smooth_factor = 1.0;
+  if (time < 1.0) {
+    smooth_factor = 0.5 * (1.0 - std::cos(M_PI * time));
+  }
+  
+  // 生成8字形轨迹点 - 使用参数方程
+  // x = a * sin(t)
+  // y = b * sin(2*t)
+  return circle_center_ + 
+         smooth_factor * eight_radius_x_ * sin(angle) * circle_x_axis_ + 
+         smooth_factor * eight_radius_y_ * sin(2*angle) * circle_y_axis_;
+}
+
+// 生成直线往返轨迹
+Eigen::Vector3d CircleController::generateLineTrajectory(double time) {
+  // 计算当前角度 - 使用正弦波产生往返运动
+  double angle = 2.0 * M_PI * circle_frequency_ * time;
+  
+  // 平滑启动：在运动开始的第一秒内使用余弦函数平滑过渡
+  double smooth_factor = 1.0;
+  if (time < 1.0) {
+    smooth_factor = 0.5 * (1.0 - std::cos(M_PI * time));
+  }
+  
+  // 生成直线往返轨迹点 - 使用正弦函数
+  return circle_center_ + 
+         smooth_factor * (line_length_ * sin(angle) / 2) * circle_x_axis_;
+}
+
+// 生成自定义轨迹
+Eigen::Vector3d CircleController::generateCustomTrajectory(double time) {
+  // 检查是否有轨迹点
+  if (custom_trajectory_points_.empty()) {
+    ROS_WARN_ONCE("自定义轨迹为空，返回中心位置");
+    return circle_center_;
+  }
+  
+  // 平滑启动：在运动开始的第一秒内使用余弦函数平滑过渡
+  double smooth_factor = 1.0;
+  if (time < 1.0) {
+    smooth_factor = 0.5 * (1.0 - std::cos(M_PI * time));
+  }
+  
+  // 计算周期性轨迹时间
+  double trajectory_duration = custom_trajectory_points_.back().time;
+  double cyclic_time = fmod(time, trajectory_duration);
+  
+  // 寻找适当的轨迹点进行插值
+  for (size_t i = 0; i < custom_trajectory_points_.size() - 1; i++) {
+    if (cyclic_time >= custom_trajectory_points_[i].time &&
+        cyclic_time < custom_trajectory_points_[i+1].time) {
+      // 线性插值两个点之间的位置
+      double alpha = (cyclic_time - custom_trajectory_points_[i].time) / 
+                    (custom_trajectory_points_[i+1].time - custom_trajectory_points_[i].time);
+      
+      Eigen::Vector3d interpolated_position = 
+          custom_trajectory_points_[i].position * (1 - alpha) + 
+          custom_trajectory_points_[i+1].position * alpha;
+      
+      // 应用平滑因子并返回结果
+      return circle_center_ + smooth_factor * (interpolated_position - circle_center_);
+    }
+  }
+  
+  // 默认返回第一个点
+  return circle_center_ + smooth_factor * (custom_trajectory_points_[0].position - circle_center_);
+}
+
+// 加载自定义轨迹
+bool CircleController::loadCustomTrajectory(const std::string& filename) {
+  try {
+    std::ifstream file(filename);
+    if (!file.is_open()) {
+      ROS_ERROR_STREAM("无法打开轨迹文件: " << filename);
+      return false;
+    }
+    
+    custom_trajectory_points_.clear();
+    std::string line;
+    
+    // 跳过标题行
+    std::getline(file, line);
+    
+    // 读取轨迹点：时间,x,y,z格式
+    while (std::getline(file, line)) {
+      std::istringstream iss(line);
+      std::string token;
+      
+      // 读取时间
+      if (!std::getline(iss, token, ',')) continue;
+      double time = std::stod(token);
+      
+      // 读取x坐标
+      if (!std::getline(iss, token, ',')) continue;
+      double x = std::stod(token);
+      
+      // 读取y坐标
+      if (!std::getline(iss, token, ',')) continue;
+      double y = std::stod(token);
+      
+      // 读取z坐标
+      if (!std::getline(iss, token, ',')) continue;
+      double z = std::stod(token);
+      
+      // 创建轨迹点并添加到列表
+      TrajectoryPoint point;
+      point.time = time;
+      point.position = Eigen::Vector3d(x, y, z);
+      custom_trajectory_points_.push_back(point);
+    }
+    
+    if (custom_trajectory_points_.empty()) {
+      ROS_ERROR("轨迹文件不包含有效数据点");
+      return false;
+    }
+    
+    ROS_INFO_STREAM("成功加载自定义轨迹，共 " << custom_trajectory_points_.size() << " 个点");
+    ROS_INFO_STREAM("轨迹持续时间: " << custom_trajectory_points_.back().time << " 秒");
+    return true;
+  } catch (const std::exception& ex) {
+    ROS_ERROR_STREAM("加载自定义轨迹时出错: " << ex.what());
+    return false;
+  }
+}
+
 bool CircleController::init(hardware_interface::RobotHW* robot_hw,
                            ros::NodeHandle& node_handle) {
   // 获取机器人ID参数
@@ -163,6 +373,34 @@ bool CircleController::init(hardware_interface::RobotHW* robot_hw,
     return false;
   }
 
+  // 读取轨迹类型参数
+  std::string trajectory_type_str;
+  if (node_handle.getParam("trajectory_type", trajectory_type_str)) {
+    if (trajectory_type_str == "circular") {
+      trajectory_type_ = CIRCULAR;
+      ROS_INFO_STREAM("CircleController: Using circular trajectory");
+    } else if (trajectory_type_str == "rectangular") {
+      trajectory_type_ = RECTANGULAR;
+      ROS_INFO_STREAM("CircleController: Using rectangular trajectory");
+    } else if (trajectory_type_str == "figure_eight") {
+      trajectory_type_ = FIGURE_EIGHT;
+      ROS_INFO_STREAM("CircleController: Using figure eight trajectory");
+    } else if (trajectory_type_str == "line") {
+      trajectory_type_ = LINE;
+      ROS_INFO_STREAM("CircleController: Using linear trajectory");
+    } else if (trajectory_type_str == "custom") {
+      trajectory_type_ = CUSTOM;
+      ROS_INFO_STREAM("CircleController: Using custom trajectory");
+    } else {
+      ROS_WARN_STREAM("CircleController: Unknown trajectory type: " << trajectory_type_str 
+                     << ". Using default circular trajectory.");
+      trajectory_type_ = CIRCULAR;
+    }
+  } else {
+    ROS_INFO_STREAM("CircleController: No trajectory type specified. Using default circular trajectory.");
+    trajectory_type_ = CIRCULAR;
+  }
+
   // 从参数服务器读取圆周运动参数
   if (!node_handle.getParam("circle_radius", circle_radius_)) {
     ROS_INFO_STREAM("CircleController: Using default circle radius: " << circle_radius_);
@@ -175,6 +413,33 @@ bool CircleController::init(hardware_interface::RobotHW* robot_hw,
   if (!node_handle.getParam("circle_plane", circle_plane_)) {
     circle_plane_ = "yz";  // 默认使用YZ平面，垂直于地面
     ROS_INFO_STREAM("CircleController: Using default circle plane: " << circle_plane_);
+  }
+
+  // 读取矩形轨迹参数
+  node_handle.param<double>("rect_length", rect_length_, 0.2);
+  node_handle.param<double>("rect_width", rect_width_, 0.1);
+  ROS_INFO_STREAM("CircleController: Rectangle dimensions: " << rect_length_ << "x" << rect_width_ << "m");
+  
+  // 读取八字形轨迹参数
+  node_handle.param<double>("eight_radius_x", eight_radius_x_, 0.1);
+  node_handle.param<double>("eight_radius_y", eight_radius_y_, 0.05);
+  ROS_INFO_STREAM("CircleController: Figure eight dimensions: " << eight_radius_x_ * 2 << "x" << eight_radius_y_ * 2 << "m");
+  
+  // 读取直线轨迹参数
+  node_handle.param<double>("line_length", line_length_, 0.2);
+  ROS_INFO_STREAM("CircleController: Line length: " << line_length_ << "m");
+  
+  // 读取自定义轨迹文件
+  std::string custom_trajectory_file;
+  if (node_handle.getParam("custom_trajectory_file", custom_trajectory_file)) {
+    custom_trajectory_file_ = custom_trajectory_file;
+    ROS_INFO_STREAM("CircleController: Custom trajectory file: " << custom_trajectory_file_);
+    if (trajectory_type_ == CUSTOM) {
+      if (!loadCustomTrajectory(custom_trajectory_file_)) {
+        ROS_WARN("CircleController: Failed to load custom trajectory. Falling back to circular trajectory.");
+        trajectory_type_ = CIRCULAR;
+      }
+    }
   }
 
   // 从参数服务器读取圆周运动中心点参数
@@ -491,8 +756,8 @@ void CircleController::update(const ros::Time& time,
       soft_block_position_(2)
   );
   
-  // 如果在CONTACT或CIRCULAR阶段，强制设置接触状态
-  if (control_phase_ == CONTACT || control_phase_ == CIRCULAR) {
+  // 如果在CONTACT或TRAJECTORY阶段，强制设置接触状态
+  if (control_phase_ == CONTACT || control_phase_ == TRAJECTORY) {
     // 强制设置接触状态为true
     current_contact_state.setContactState(true);
     
@@ -767,7 +1032,7 @@ void CircleController::update(const ros::Time& time,
     // 当接触持续时间超过设定阈值时切换到圆周运动
     if (contact_duration > phase_duration_) {
       // 从接触阶段进入圆周运动阶段
-      control_phase_ = CIRCULAR;
+      control_phase_ = TRAJECTORY;
       phase_start_time_ = time;
       
       // 设置圆周运动中心为接触点
@@ -778,7 +1043,7 @@ void CircleController::update(const ros::Time& time,
       
       // 发布状态变化
       std_msgs::String phase_msg;
-      phase_msg.data = "CIRCULAR";
+      phase_msg.data = "TRAJECTORY";
       phase_pub_.publish(phase_msg);
       
       ROS_INFO_STREAM("===== 进入圆周运动阶段! =====");
@@ -787,59 +1052,46 @@ void CircleController::update(const ros::Time& time,
       ROS_INFO_STREAM("圆周频率: " << circle_frequency_ << " Hz");
     }
   }
-  else if (control_phase_ == CIRCULAR) {
-    // 圆周运动阶段
-  double angle = 2.0 * M_PI * circle_frequency_ * elapsed_time_;
-    
-    // 添加调试输出
+  else if (control_phase_ == TRAJECTORY) {
+    // 轨迹运动阶段
     if (circular_counter_++ % 1000 == 0) {
-      ROS_INFO_STREAM("圆周运动阶段: 已持续 " << elapsed_time_ << " 秒");
-      ROS_INFO_STREAM("当前角度: " << angle << " rad (" << (angle * 180 / M_PI) << " 度)");
+      ROS_INFO_STREAM("轨迹运动阶段: 已持续 " << elapsed_time_ << " 秒");
+      switch (trajectory_type_) {
+        case CIRCULAR:
+          ROS_INFO_STREAM("当前轨迹: 圆形, 半径: " << circle_radius_ << "m");
+          break;
+        case RECTANGULAR:
+          ROS_INFO_STREAM("当前轨迹: 矩形, 长宽: " << rect_length_ << "x" << rect_width_ << "m");
+          break;
+        case FIGURE_EIGHT:
+          ROS_INFO_STREAM("当前轨迹: 八字形, 尺寸: " << eight_radius_x_ * 2 << "x" << eight_radius_y_ * 2 << "m");
+          break;
+        case LINE:
+          ROS_INFO_STREAM("当前轨迹: 直线往返, 长度: " << line_length_ << "m");
+          break;
+        case CUSTOM:
+          ROS_INFO_STREAM("当前轨迹: 自定义轨迹, 点数: " << custom_trajectory_points_.size());
+          break;
+      }
       ROS_INFO_STREAM("机械臂位置: [" << position.transpose() << "]");
     }
     
-    // 平滑启动：在运动开始的第一秒内使用余弦函数平滑过渡
-    double smooth_factor = 1.0;
-    if (elapsed_time_ < 1.0) {
-      smooth_factor = 0.5 * (1.0 - std::cos(M_PI * elapsed_time_));
-    }
-    double smooth_angle = smooth_factor * angle;  // 应用平滑因子到角度
+    // 生成当前轨迹点
+    Eigen::Vector3d trajectory_position = generateTrajectory(elapsed_time_);
     
-    // 确保圆心正确设置
-    if (circle_center_.norm() < 1e-6) {
-      circle_center_ = position;  // 如果圆心未设置，使用当前位置
-      ROS_WARN_STREAM("圆心未正确设置，使用当前位置: [" << position.transpose() << "]");
-    }
+    // 更新期望位置的XY坐标（Z坐标由力控制决定）
+    position_d_[0] = trajectory_position[0];
+    position_d_[1] = trajectory_position[1];
     
-    // 使用接触位置作为圆周运动中心
-    Eigen::Vector3d circular_position = circle_center_ + 
-                 circle_radius_ * cos(smooth_angle) * circle_x_axis_ + 
-                 circle_radius_ * sin(smooth_angle) * circle_y_axis_;
+    // 计算期望速度（这部分可以根据需要进一步实现各轨迹类型的速度函数）
+    // 这里简化为使用有限差分计算速度（前向差分）
+    double dt = 0.001; // 1毫秒的时间步长
+    Eigen::Vector3d next_position = generateTrajectory(elapsed_time_ + dt);
+    position_d_dot = (next_position - trajectory_position) / dt;
     
-    // 保持Z轴不变，只在水平面内移动
-    position_d_[0] = circular_position[0];
-    position_d_[1] = circular_position[1];
-    // 不直接更新Z坐标，而是通过力控制调整
-    
-    // 计算期望速度（轨迹导数）
-    double angle_velocity = 2.0 * M_PI * circle_frequency_;
-    position_d_dot = -circle_radius_ * sin(smooth_angle) * angle_velocity * smooth_factor * circle_x_axis_ + 
-                     circle_radius_ * cos(smooth_angle) * angle_velocity * smooth_factor * circle_y_axis_;
-    
-    // 计算期望加速度（轨迹二阶导数）
-    position_d_ddot = -circle_radius_ * cos(smooth_angle) * std::pow(angle_velocity, 2) * std::pow(smooth_factor, 2) * circle_x_axis_ - 
-                      circle_radius_ * sin(smooth_angle) * std::pow(angle_velocity, 2) * std::pow(smooth_factor, 2) * circle_y_axis_;
-    
-    // 平滑启动期间的额外加速度项
-    if (elapsed_time_ < 1.0) {
-      double smooth_factor_dot = 0.5 * M_PI * std::sin(M_PI * elapsed_time_);
-      position_d_dot += circle_radius_ * cos(smooth_angle) * angle_velocity * smooth_factor_dot * circle_x_axis_ + 
-                       circle_radius_ * sin(smooth_angle) * angle_velocity * smooth_factor_dot * circle_y_axis_;
-      
-      double smooth_factor_ddot = 0.5 * std::pow(M_PI, 2) * std::cos(M_PI * elapsed_time_);
-      position_d_ddot += circle_radius_ * cos(smooth_angle) * angle_velocity * smooth_factor_ddot * circle_x_axis_ + 
-                         circle_radius_ * sin(smooth_angle) * angle_velocity * smooth_factor_ddot * circle_y_axis_;
-    }
+    // 简化的加速度计算（二阶差分）
+    Eigen::Vector3d next_next_position = generateTrajectory(elapsed_time_ + 2*dt);
+    position_d_ddot = (next_next_position - 2*next_position + trajectory_position) / (dt*dt);
     
     // 力控制 - 保持恒定接触力
     // 通过软接触模型计算接触力并调整轨迹
@@ -854,7 +1106,7 @@ void CircleController::update(const ros::Time& time,
       }
       
       if (circular_counter_ % 1000 == 0) {
-        ROS_WARN_STREAM("圆周运动中失去接触，尝试向下移动重新建立接触");
+        ROS_WARN_STREAM("轨迹运动中失去接触，尝试向下移动重新建立接触");
       }
     } else {
       // 已检测到接触，调整力
@@ -966,7 +1218,7 @@ void CircleController::update(const ros::Time& time,
     if (motion_counter++ % 1000 == 0) {  // 约1s打印一次
       ROS_INFO_STREAM("=== 运动控制状态 ===");
       ROS_INFO_STREAM("控制阶段: " << (control_phase_ == APPROACH ? "接近" : 
-                                    (control_phase_ == CONTACT ? "接触" : "圆周运动")));
+                                    (control_phase_ == CONTACT ? "接触" : "轨迹运动")));
       ROS_INFO_STREAM("当前位置: [" << position.transpose() << "]");
       ROS_INFO_STREAM("期望位置: [" << position_d_.transpose() << "]");
       ROS_INFO_STREAM("位置误差: [" << error.head(3).transpose() << "]");
@@ -989,7 +1241,7 @@ void CircleController::update(const ros::Time& time,
         ROS_INFO_STREAM("到软体块距离: " << (position(2) - soft_block_position_(2)) << " m");
       }
       
-      if (control_phase_ == CIRCULAR) {
+      if (control_phase_ == TRAJECTORY) {
         double angle = 2.0 * M_PI * circle_frequency_ * elapsed_time_;
         ROS_INFO_STREAM("圆周角度: " << fmod(angle, 2.0 * M_PI) << " rad");
       }

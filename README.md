@@ -7,7 +7,7 @@
 
 ## 功能特点
 - 独立设计的力探头末端执行器，可测量接触力
-- 多种控制模式：圆周运动、笛卡尔阻抗控制等
+- 多种控制模式：圆周运动、矩形运动、八字形、直线往返和自定义轨迹等
 - 模拟软硬表面的接触场景
 - 优化的机器人初始姿态，避免碰撞
 - 完整的力反馈数据获取接口
@@ -43,10 +43,210 @@
    roslaunch franka_gazebo fr3_with_independent_probe.launch
    ```
 
+## 详细启动方法与参数
+
+### 基础启动命令
+
+基础仿真环境（带软接触力控制）：
+```bash
+roslaunch franka_gazebo fr3_with_soft_contact.launch
+```
+
+### 轨迹类型选择
+
+支持多种轨迹类型，通过`trajectory_type`参数指定：
+```bash
+roslaunch franka_gazebo fr3_with_soft_contact.launch trajectory_type:=circular
+```
+
+可用轨迹类型：
+- `circular`: 圆形轨迹（默认）
+- `rectangular`: 矩形轨迹
+- `figure_eight`: 八字形轨迹
+- `linear`: 直线往返轨迹
+- `custom`: 自定义轨迹（从CSV文件读取）
+
+### 控制参数设置
+
+1. **力控参数**：
+   ```bash
+   roslaunch franka_gazebo fr3_with_soft_contact.launch target_force:=10.0
+   ```
+
+2. **轨迹参数**：
+   ```bash
+   # 圆形轨迹半径（米）
+   roslaunch franka_gazebo fr3_with_soft_contact.launch circle_radius:=0.1
+   
+   # 矩形尺寸（米）
+   roslaunch franka_gazebo fr3_with_soft_contact.launch rect_width:=0.1 rect_height:=0.2
+   
+   # 八字形尺寸（米）
+   roslaunch franka_gazebo fr3_with_soft_contact.launch eight_width:=0.15 eight_height:=0.1
+   
+   # 直线长度（米）
+   roslaunch franka_gazebo fr3_with_soft_contact.launch line_length:=0.2
+   ```
+
+3. **自定义轨迹**：
+   ```bash
+   roslaunch franka_gazebo fr3_with_soft_contact.launch trajectory_type:=custom custom_trajectory_file:=custom_path.csv
+   ```
+
+4. **运动速度**：
+   ```bash
+   roslaunch franka_gazebo fr3_with_soft_contact.launch speed_factor:=1.0
+   ```
+
+### 软接触材料参数
+
+调整接触表面的软硬度：
+```bash
+roslaunch franka_gazebo fr3_with_soft_contact.launch youngs_modulus:=1000.0 poisson_ratio:=0.45
+```
+
+### 组合参数示例
+
+```bash
+# 在矩形轨迹上以8N的力运行，速度为默认的1.5倍
+roslaunch franka_gazebo fr3_with_soft_contact.launch trajectory_type:=rectangular target_force:=8.0 speed_factor:=1.5 rect_width:=0.15 rect_height:=0.1
+```
+
+### 日志与数据记录
+
+仿真运行时会自动记录力数据到CSV文件：
+```
+/home/jason/ws/catkin_ws/src/franka_ros/franka_gazebo/logs/force_data_YYYYMMDD_HHMMSS.csv
+```
+
+查看日志数据：
+```bash
+cd ~/ws/catkin_ws/src/franka_ros/franka_gazebo/logs
+cat force_data_YYYYMMDD_HHMMSS.csv
+```
+
 ## 主要修改
 1. 优化启动文件，改进机器人位置和初始姿态
 2. 调整探头质量从1.96kg到0.5kg，提高末端姿态稳定性
 3. 增强控制器参数，改善末端轨迹跟踪
+4. 添加多种轨迹类型支持，包括矩形、八字形、直线往返和自定义轨迹
+
+## 自定义轨迹创建与使用
+
+系统支持通过CSV文件定义自定义轨迹，使机器人末端能够按照任意路径运动，同时保持恒定力控制。
+
+### 自定义轨迹文件格式
+
+自定义轨迹CSV文件需要遵循以下格式：
+
+```csv
+# 这是注释行，会被忽略
+# 格式: x,y,z,time
+# 坐标单位: 米, 时间单位: 秒
+0.0000,0.0000,0.0000,0.0  # 起始点
+0.0100,0.0050,0.0000,0.1  # 下一个位置点和到达该点的时间
+0.0200,0.0100,0.0000,0.2
+...
+```
+
+要点说明：
+1. 每行包含4个值：x坐标、y坐标、z坐标、时间
+2. 坐标是相对于初始接触点的相对位置（单位：米）
+3. 时间是相对于轨迹开始的时间（单位：秒）
+4. 以#开头的行为注释，会被忽略
+5. 第一个点通常应为(0,0,0,0)，表示从当前位置开始
+
+### 创建自定义轨迹
+
+可以通过以下方法创建自定义轨迹：
+
+#### 方法1：手动创建
+
+1. 使用文本编辑器创建一个CSV文件
+2. 按照上述格式定义轨迹点
+3. 保存为.csv文件
+
+#### 方法2：使用脚本生成
+
+可以使用Python等编程语言生成复杂轨迹：
+
+```python
+import numpy as np
+import pandas as pd
+
+# 生成心形轨迹示例
+t = np.linspace(0, 2*np.pi, 100)
+x = 0.05 * (16 * np.sin(t)**3)
+y = 0.05 * (13 * np.cos(t) - 5 * np.cos(2*t) - 2 * np.cos(3*t) - np.cos(4*t))
+z = np.zeros_like(t)
+time = np.linspace(0, 10, 100)  # 10秒完成整个轨迹
+
+# 创建DataFrame并保存为CSV
+df = pd.DataFrame({
+    'x': x,
+    'y': y,
+    'z': z,
+    'time': time
+})
+df.to_csv('heart_trajectory.csv', index=False, header=False)
+
+# 添加注释头
+with open('heart_trajectory.csv', 'r') as f:
+    content = f.read()
+with open('heart_trajectory.csv', 'w') as f:
+    f.write('# 心形轨迹\n# 格式: x,y,z,time\n# 坐标单位: 米, 时间单位: 秒\n')
+    f.write(content)
+```
+
+#### 方法3：从现有数据转换
+
+如果有其他格式的轨迹数据，可以编写转换脚本将其转换为所需的CSV格式。
+
+### 使用自定义轨迹
+
+1. 将创建好的CSV文件放入以下目录：
+   ```
+   ~/ws/catkin_ws/src/franka_ros/franka_example_controllers/config/
+   ```
+
+2. 启动仿真并指定自定义轨迹：
+   ```bash
+   roslaunch franka_gazebo fr3_with_soft_contact.launch trajectory_type:=custom custom_trajectory_file:=your_trajectory.csv
+   ```
+
+   如果轨迹文件不在默认目录，可以提供完整路径：
+   ```bash
+   roslaunch franka_gazebo fr3_with_soft_contact.launch trajectory_type:=custom custom_trajectory_file:=/完整/路径/your_trajectory.csv
+   ```
+
+### 轨迹示例
+
+系统默认提供了一个示例轨迹文件：`custom_trajectory_example.csv`，可以参考其格式：
+
+```bash
+# 查看示例轨迹文件
+cat ~/ws/catkin_ws/src/franka_ros/franka_example_controllers/config/custom_trajectory_example.csv
+```
+
+### 调整轨迹执行速度
+
+通过`speed_factor`参数可以调整轨迹执行速度：
+
+```bash
+# 以0.5倍速执行自定义轨迹
+roslaunch franka_gazebo fr3_with_soft_contact.launch trajectory_type:=custom custom_trajectory_file:=your_trajectory.csv speed_factor:=0.5
+
+# 以2倍速执行自定义轨迹
+roslaunch franka_gazebo fr3_with_soft_contact.launch trajectory_type:=custom custom_trajectory_file:=your_trajectory.csv speed_factor:=2.0
+```
+
+### 注意事项
+
+1. 确保轨迹点之间的距离合理，避免机器人需要做大幅度快速运动
+2. 轨迹应平滑过渡，避免突变导致控制不稳定
+3. 考虑机器人的工作空间限制，避免轨迹超出范围
+4. 在实际运行前，建议先以低速测试自定义轨迹
+5. Z轴方向的运动会影响接触力，使用时需谨慎设计
 
 ## 项目结构
 详细的项目结构和文件说明请参考 `franka_ros/docs/guidence.txt`。

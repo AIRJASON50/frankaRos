@@ -8,12 +8,20 @@
   机器人被放置在安全的位置(-0.8,0,0)，避免与桌子和软块碰撞。
   默认使用画圆控制器使机器人末端沿圆周运动。
   
+  支持多种轨迹类型：
+  - 圆形轨迹（circular）：默认，可设置半径和频率
+  - 矩形轨迹（rectangular）：可设置长度和宽度
+  - 八字形轨迹（figure_eight）：可设置X轴和Y轴半径
+  - 直线往返轨迹（line）：可设置直线长度
+  - 自定义轨迹（custom）：可指定轨迹文件
+  
   主要修改:
   1. 调整了机器人位置，远离桌子
   2. 调整了默认初始关节角度，使姿态更稳定
   3. 默认加载带软块的世界文件
   4. 移除了探头位置控制器，改用固定关节连接探头
   5. 设置圆周运动平面为YZ平面，使圆周运动的轴与地面垂直
+  6. 添加了多种轨迹类型支持
 -->
 <launch>
   <!-- 机器人类型和ID配置 -->
@@ -59,6 +67,9 @@
 
   <arg name="rviz" default="true" doc="Should RVIz be launched?" />
   
+  <!-- 轨迹类型配置 -->
+  <arg name="trajectory_type" default="circular" doc="轨迹类型 (circular/rectangular/figure_eight/line/custom)"/>
+  
   <!-- 圆周运动控制器参数 -->
   <arg name="circle_radius" default="0.1" doc="圆周运动半径 [m]"/>
   <arg name="circle_frequency" default="0.3" doc="圆周运动频率 [Hz]"/>
@@ -66,6 +77,20 @@
   <arg name="center_x" default="0.8" doc="圆周运动中心点X坐标 [m]"/>
   <arg name="center_y" default="0.0" doc="圆周运动中心点Y坐标 [m]"/>
   <arg name="center_z" default="0.3" doc="圆周运动中心点Z坐标 [m]"/>
+  
+  <!-- 矩形轨迹参数 -->
+  <arg name="rect_length" default="0.2" doc="矩形长度 [m]"/>
+  <arg name="rect_width" default="0.1" doc="矩形宽度 [m]"/>
+  
+  <!-- 八字形轨迹参数 -->
+  <arg name="eight_radius_x" default="0.1" doc="八字形X轴半径 [m]"/>
+  <arg name="eight_radius_y" default="0.05" doc="八字形Y轴半径 [m]"/>
+  
+  <!-- 直线轨迹参数 -->
+  <arg name="line_length" default="0.2" doc="直线长度 [m]"/>
+  
+  <!-- 自定义轨迹参数 -->
+  <arg name="custom_trajectory_file" default="" doc="自定义轨迹文件路径"/>
   
   <!-- 初始关节配置 - 使用原版设定，形成90度肘部弯曲的稳定姿态 -->
   <arg name="initial_joint_positions" 
@@ -98,21 +123,59 @@
     <arg name="initial_joint_positions" value="$(arg initial_joint_positions)" />
   </include>
   
-  <!-- 设置圆周运动控制器参数 -->
+  <!-- 轨迹和控制器参数设置 -->
   <group if="$(eval arg('controller') == 'circle_controller')">
-    <rosparam param="circle_radius" subst_value="true">$(arg circle_radius)</rosparam>
+    <!-- 通用轨迹参数 -->
+    <rosparam param="trajectory_type" subst_value="true">$(arg trajectory_type)</rosparam>
     <rosparam param="circle_frequency" subst_value="true">$(arg circle_frequency)</rosparam>
+    
+    <!-- 圆形轨迹参数 -->
+    <rosparam param="circle_radius" subst_value="true">$(arg circle_radius)</rosparam>
     <rosparam param="circle_plane" subst_value="true">$(arg circle_plane)</rosparam>
+    
+    <!-- 矩形轨迹参数 -->
+    <rosparam param="rect_length" subst_value="true">$(arg rect_length)</rosparam>
+    <rosparam param="rect_width" subst_value="true">$(arg rect_width)</rosparam>
+    
+    <!-- 八字形轨迹参数 -->
+    <rosparam param="eight_radius_x" subst_value="true">$(arg eight_radius_x)</rosparam>
+    <rosparam param="eight_radius_y" subst_value="true">$(arg eight_radius_y)</rosparam>
+    
+    <!-- 直线轨迹参数 -->
+    <rosparam param="line_length" subst_value="true">$(arg line_length)</rosparam>
+    
+    <!-- 自定义轨迹参数 -->
+    <rosparam param="custom_trajectory_file" subst_value="true">$(arg custom_trajectory_file)</rosparam>
   </group>
   
   <!-- 圆形运动控制器参数 -->
   <group ns="circle_controller">
-    <param name="circle_radius" value="$(arg circle_radius)"/>
+    <!-- 通用参数 -->
+    <param name="trajectory_type" value="$(arg trajectory_type)"/>
     <param name="circle_frequency" value="$(arg circle_frequency)"/>
+    
+    <!-- 轨迹中心点 -->
+    <param name="center_x" value="$(arg center_x)"/>
+    <param name="center_y" value="$(arg center_y)"/>
+    <param name="center_z" value="$(arg center_z)"/>
+    
+    <!-- 圆形轨迹参数 -->
+    <param name="circle_radius" value="$(arg circle_radius)"/>
     <param name="circle_plane" value="$(arg circle_plane)"/>
-    <param name="center_x" value="0.5"/>
-    <param name="center_y" value="0.0"/>
-    <param name="center_z" value="0.3"/>
+    
+    <!-- 矩形轨迹参数 -->
+    <param name="rect_length" value="$(arg rect_length)"/>
+    <param name="rect_width" value="$(arg rect_width)"/>
+    
+    <!-- 八字形轨迹参数 -->
+    <param name="eight_radius_x" value="$(arg eight_radius_x)"/>
+    <param name="eight_radius_y" value="$(arg eight_radius_y)"/>
+    
+    <!-- 直线轨迹参数 -->
+    <param name="line_length" value="$(arg line_length)"/>
+    
+    <!-- 自定义轨迹参数 -->
+    <param name="custom_trajectory_file" value="$(arg custom_trajectory_file)"/>
   </group>
   
   <!-- 启动力传感数据记录脚本 -->

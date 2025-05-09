@@ -37,7 +37,110 @@ franka_ros/
 │   │   └── force_data_*.csv                # 力数据记录
 ```
 
-## 3. 实现阶段
+## 3. 仿真启动方法与参数配置
+
+### 3.1 基础启动命令
+```bash
+# 基础仿真命令
+roslaunch franka_gazebo fr3_with_soft_contact.launch
+
+# 指定轨迹类型
+roslaunch franka_gazebo fr3_with_soft_contact.launch trajectory_type:=circular
+```
+
+### 3.2 支持的轨迹类型及参数
+
+#### 轨迹类型
+| 轨迹类型 | 参数名称 | 说明 |
+|---------|---------|------|
+| circular | trajectory_type:=circular | 圆形轨迹（默认） |
+| rectangular | trajectory_type:=rectangular | 矩形轨迹 |
+| figure_eight | trajectory_type:=figure_eight | 八字形轨迹 |
+| linear | trajectory_type:=linear | 直线往返轨迹 |
+| custom | trajectory_type:=custom | 自定义轨迹 |
+
+#### 轨迹参数设置
+| 参数名称 | 默认值 | 说明 |
+|---------|-------|------|
+| circle_radius | 0.1 | 圆形轨迹半径（米） |
+| rect_width | 0.1 | 矩形宽度（米） |
+| rect_height | 0.1 | 矩形高度（米） |
+| eight_width | 0.15 | 八字形宽度（米） |
+| eight_height | 0.1 | 八字形高度（米） |
+| line_length | 0.2 | 直线长度（米） |
+| custom_trajectory_file | custom_trajectory_example.csv | 自定义轨迹文件路径 |
+| speed_factor | 1.0 | 轨迹运动速度系数 |
+
+#### 力控制参数
+| 参数名称 | 默认值 | 说明 |
+|---------|-------|------|
+| target_force | 10.0 | 目标接触力（牛顿） |
+| force_p_gain | 0.05 | 力控P增益 |
+| force_i_gain | 0.0 | 力控I增益 |
+| force_d_gain | 0.01 | 力控D增益 |
+
+#### 软接触参数
+| 参数名称 | 默认值 | 说明 |
+|---------|-------|------|
+| youngs_modulus | 1000.0 | 杨氏模量（帕斯卡） |
+| poisson_ratio | 0.45 | 泊松比 |
+| contact_stiffness | 800.0 | 接触刚度（N/m） |
+| contact_damping | 10.0 | 接触阻尼（Ns/m） |
+
+### 3.3 使用示例
+
+#### 基本圆形轨迹（默认）
+```bash
+roslaunch franka_gazebo fr3_with_soft_contact.launch
+```
+
+#### 矩形轨迹示例
+```bash
+roslaunch franka_gazebo fr3_with_soft_contact.launch trajectory_type:=rectangular rect_width:=0.15 rect_height:=0.1
+```
+
+#### 八字形轨迹示例
+```bash
+roslaunch franka_gazebo fr3_with_soft_contact.launch trajectory_type:=figure_eight eight_width:=0.2 eight_height:=0.1 speed_factor:=0.8
+```
+
+#### 自定义轨迹示例
+```bash
+roslaunch franka_gazebo fr3_with_soft_contact.launch trajectory_type:=custom custom_trajectory_file:=my_custom_path.csv
+```
+
+#### 调整力大小和材料属性
+```bash
+roslaunch franka_gazebo fr3_with_soft_contact.launch target_force:=8.0 youngs_modulus:=2000.0 poisson_ratio:=0.4
+```
+
+### 3.4 日志数据与分析
+
+运行仿真后，力数据将被自动记录到CSV文件中：
+```
+franka_ros/franka_gazebo/logs/force_data_YYYYMMDD_HHMMSS.csv
+```
+
+CSV文件格式：
+```
+# 实验开始时间: [时间] 秒
+# 本地时间: YYYYMMDD_HHMMSS
+# 控制阶段说明: 0=APPROACH, 1=CONTACT, 2=TRAJECTORY
+# 软块物理属性: 杨氏模量=[值]Pa, 泊松比=[值]
+# 目标力: [值]N
+# ---------------------------------------
+time,phase,pos_x,pos_y,pos_z,force_x,force_y,force_z,force_magnitude,depth,target_force
+...数据内容...
+```
+
+### 3.5 常见问题与解决方法
+
+1. **力控不稳定**：调整力控PID参数，特别是增大阻尼系数
+2. **轨迹跟踪不准确**：检查速度因子是否过大，必要时降低速度
+3. **接触不稳定**：尝试调整软接触参数，增大杨氏模量或降低目标力
+4. **启动失败**：检查ROS环境和依赖包是否正确安装
+
+## 4. 实现阶段
 
 ### 阶段1：已完成部分
 
@@ -86,9 +189,9 @@ franka_ros/
 - [ ] 改进鲁棒性（应对外部干扰）
 - [ ] 参数自动调整
 
-## 4. 技术关键点
+## 5. 技术关键点
 
-### 4.1 轨迹生成改进
+### 5.1 轨迹生成改进
 ```cpp
 // 当前圆周轨迹生成
 Eigen::Vector3d circular_position = circle_center_ + 
@@ -99,7 +202,7 @@ Eigen::Vector3d circular_position = circle_center_ +
 Eigen::Vector3d desired_position = trajectory_generator_->getPosition(elapsed_time_);
 ```
 
-### 4.2 动态力控制
+### 5.2 动态力控制
 ```cpp
 // 当前恒力控制
 double force_error = target_force_ - current_contact_state.contact_force;
@@ -109,7 +212,7 @@ double target_force_current = force_trajectory_->getForce(elapsed_time_);
 double force_error = target_force_current - current_contact_state.contact_force;
 ```
 
-## 5. 工作计划时间表
+## 6. 工作计划时间表
 
 ### 短期目标（2周内）
 1. 实现通用轨迹生成器（5天）
@@ -129,13 +232,13 @@ double force_error = target_force_current - current_contact_state.contact_force;
 2. MPC控制器框架实现（2周）
 3. 集成与性能优化（3周）
 
-## 6. 注意事项
+## 7. 注意事项
 
 - 保持实时性要求（1kHz控制频率）
 - 确保轨迹平滑过渡，避免突变
 - 力控制与轨迹跟踪需要平衡权重
 
-## 7. 后续扩展方向
+## 8. 后续扩展方向
 
 - 增加复杂路径绘制功能
 - 实现多点接触控制
