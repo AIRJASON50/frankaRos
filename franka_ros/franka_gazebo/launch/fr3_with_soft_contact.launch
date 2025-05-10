@@ -30,6 +30,7 @@
   <arg name="center_x" default="0.4" doc="轨迹中心点X坐标 [m]"/>
   <arg name="center_y" default="0.0" doc="轨迹中心点Y坐标 [m]"/>
   <arg name="center_z" default="0.505" doc="轨迹中心点Z坐标 [m]"/>
+  <arg name="speed_factor" default="0.2" doc="轨迹运动速度因子，值越小移动越慢"/>
   
   <!-- 圆形轨迹参数 -->
   <arg name="circle_radius" default="0.1" doc="圆周运动半径 [m]"/>
@@ -49,6 +50,18 @@
   <!-- 自定义轨迹参数 -->
   <arg name="custom_trajectory_file" default="" doc="自定义轨迹文件路径"/>
 
+  <!-- 力轨迹类型参数 -->
+  <arg name="force_profile_type" default="constant" doc="力轨迹类型 (constant/sine/step)"/>
+  <arg name="force_sine_amplitude" default="0.0" doc="正弦力幅值 [N]"/>
+  <arg name="force_sine_frequency" default="1.0" doc="正弦力频率 [Hz]"/>
+  <arg name="force_step_time" default="5.0" doc="阶跃力变化时刻 [s]"/>
+  <arg name="force_step_value" default="0.0" doc="阶跃后力值 [N]"/>
+
+  <!-- 力噪音参数 -->
+  <arg name="force_noise_enable" default="false" doc="是否启用力噪音 (true/false)"/>
+  <arg name="force_noise_min" default="1.0" doc="力噪音最小值 [N]"/>
+  <arg name="force_noise_max" default="2.0" doc="力噪音最大值 [N]"/>
+
   <!-- 加载机器人和软体块模型到Gazebo -->
   <include file="$(find franka_gazebo)/launch/fr3_with_independent_probe.launch">
     <arg name="controller" value="circle_controller" />
@@ -66,12 +79,21 @@
     <arg name="center_x" value="$(arg center_x)"/>
     <arg name="center_y" value="$(arg center_y)"/>
     <arg name="center_z" value="$(arg center_z)"/>
+    <arg name="speed_factor" value="$(arg speed_factor)"/>
     <arg name="rect_length" value="$(arg rect_length)"/>
     <arg name="rect_width" value="$(arg rect_width)"/>
     <arg name="eight_radius_x" value="$(arg eight_radius_x)"/>
     <arg name="eight_radius_y" value="$(arg eight_radius_y)"/>
     <arg name="line_length" value="$(arg line_length)"/>
     <arg name="custom_trajectory_file" value="$(arg custom_trajectory_file)"/>
+    <arg name="force_profile_type" value="$(arg force_profile_type)"/>
+    <arg name="force_sine_amplitude" value="$(arg force_sine_amplitude)"/>
+    <arg name="force_sine_frequency" value="$(arg force_sine_frequency)"/>
+    <arg name="force_step_time" value="$(arg force_step_time)"/>
+    <arg name="force_step_value" value="$(arg force_step_value)"/>
+    <arg name="force_noise_enable" value="$(arg force_noise_enable)"/>
+    <arg name="force_noise_min" value="$(arg force_noise_min)"/>
+    <arg name="force_noise_max" value="$(arg force_noise_max)"/>
   </include>
   
   <!-- 加载接触模型参数 -->
@@ -84,9 +106,6 @@
   <node name="rqt_force_plot" pkg="rqt_plot" type="rqt_plot" 
         args="/circle_controller/contact_force/wrench/force/z /franka_state_controller/F_ext/wrench/force/z /circle_controller/target_force" 
         respawn="true" output="screen" />
-  
-  <!-- 启动rqt_gui用于监控阶段变换 -->
-  <node pkg="rqt_gui" type="rqt_gui" name="rqt_gui" />
   
   <!-- 启动接触状态记录器 -->
   <node pkg="rosbag" type="record" name="contact_recorder" 

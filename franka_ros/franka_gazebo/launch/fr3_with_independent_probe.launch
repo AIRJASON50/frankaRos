@@ -77,6 +77,7 @@
   <arg name="center_x" default="0.8" doc="圆周运动中心点X坐标 [m]"/>
   <arg name="center_y" default="0.0" doc="圆周运动中心点Y坐标 [m]"/>
   <arg name="center_z" default="0.3" doc="圆周运动中心点Z坐标 [m]"/>
+  <arg name="speed_factor" default="1.0" doc="轨迹运动速度因子，值越小移动越慢"/>
   
   <!-- 矩形轨迹参数 -->
   <arg name="rect_length" default="0.2" doc="矩形长度 [m]"/>
@@ -148,6 +149,18 @@
     <rosparam param="custom_trajectory_file" subst_value="true">$(arg custom_trajectory_file)</rosparam>
   </group>
   
+  <!-- 力轨迹类型参数 -->
+  <arg name="force_profile_type" default="constant" doc="力轨迹类型 (constant/sine/step)"/>
+  <arg name="force_sine_amplitude" default="0.0" doc="正弦力幅值 [N]"/>
+  <arg name="force_sine_frequency" default="1.0" doc="正弦力频率 [Hz]"/>
+  <arg name="force_step_time" default="5.0" doc="阶跃力变化时刻 [s]"/>
+  <arg name="force_step_value" default="0.0" doc="阶跃后力值 [N]"/>
+  
+  <!-- 力噪音参数 -->
+  <arg name="force_noise_enable" default="false" doc="是否启用力噪音 (true/false)"/>
+  <arg name="force_noise_min" default="1.0" doc="力噪音最小值 [N]"/>
+  <arg name="force_noise_max" default="2.0" doc="力噪音最大值 [N]"/>
+  
   <!-- 圆形运动控制器参数 -->
   <group ns="circle_controller">
     <!-- 通用参数 -->
@@ -158,6 +171,9 @@
     <param name="center_x" value="$(arg center_x)"/>
     <param name="center_y" value="$(arg center_y)"/>
     <param name="center_z" value="$(arg center_z)"/>
+    
+    <!-- 速度因子 -->
+    <param name="speed_factor" value="$(arg speed_factor)"/>
     
     <!-- 圆形轨迹参数 -->
     <param name="circle_radius" value="$(arg circle_radius)"/>
@@ -176,6 +192,15 @@
     
     <!-- 自定义轨迹参数 -->
     <param name="custom_trajectory_file" value="$(arg custom_trajectory_file)"/>
+    <!-- 力轨迹类型参数 -->
+    <param name="force_controller/force_profile_type" value="$(arg force_profile_type)"/>
+    <param name="force_controller/force_sine_amplitude" value="$(arg force_sine_amplitude)"/>
+    <param name="force_controller/force_sine_frequency" value="$(arg force_sine_frequency)"/>
+    <param name="force_controller/force_step_time" value="$(arg force_step_time)"/>
+    <param name="force_controller/force_step_value" value="$(arg force_step_value)"/>
+    <param name="force_noise_enable" value="$(arg force_noise_enable)"/>
+    <param name="force_noise_min" value="$(arg force_noise_min)"/>
+    <param name="force_noise_max" value="$(arg force_noise_max)"/>
   </group>
   
   <!-- 启动力传感数据记录脚本 -->

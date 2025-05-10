@@ -123,7 +123,7 @@ roslaunch franka_gazebo fr3_with_soft_contact.launch trajectory_type:=rectangula
 ```bash
 cd ~/ws/catkin_ws/src/franka_ros/franka_gazebo/logs
 cat force_data_YYYYMMDD_HHMMSS.csv
-```
+   ```
 
 ## 主要修改
 1. 优化启动文件，改进机器人位置和初始姿态

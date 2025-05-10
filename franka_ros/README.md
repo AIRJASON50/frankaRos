@@ -69,3 +69,57 @@ roslaunch franka_gazebo fr3_with_soft_contact.launch trajectory_type:=custom cus
 - 八字形轨迹：`eight_radius_x`（X轴半径）, `eight_radius_y`（Y轴半径）
 - 直线轨迹：`line_length`（长度）
 - 自定义轨迹：`custom_trajectory_file`（CSV文件路径）
+
+## 力控制类型与参数配置
+
+本项目支持多种力变化类型，用户可通过launch参数灵活选择和配置：
+
+### 支持的力变化类型
+- `constant`：恒定力（默认）
+- `sine`：正弦变化力
+- `step`：阶跃变化力
+
+### 主要参数说明
+| 参数名 | 说明 | 适用类型 | 默认值 |
+|--------|------|----------|--------|
+| force_profile_type | 力变化类型(constant/sine/step) | 所有 | constant |
+| force_sine_amplitude | 正弦力幅值（N） | sine | 0.0 |
+| force_sine_frequency | 正弦力频率（Hz） | sine | 1.0 |
+| force_step_time | 阶跃发生时刻（秒） | step | 5.0 |
+| force_step_value | 阶跃后力值（N） | step | 0.0 |
+| force_noise_enable | 是否启用力噪音 (true/false) | 所有 | false |
+| force_noise_min | 力噪音最小值（N） | force_noise_enable=true | -2.0 |
+| force_noise_max | 力噪音最大值（N） | force_noise_enable=true | 2.0 |
+
+### 力噪音说明
+- 若`force_noise_enable`为`true`，则每个控制周期在目标力上叠加**三维空间（x/y/z方向）-2~2N的均匀分布噪音**，扰动作用于末端期望位置，最大扰动幅度约±2mm。
+- 可通过`force_noise_min`和`force_noise_max`调整噪音幅度区间。
+
+### 使用示例
+
+#### 1. 恒定力（默认）
+```bash
+roslaunch franka_gazebo fr3_with_soft_contact.launch force_profile_type:=constant
+```
+
+#### 2. 正弦变化力
+```bash
+roslaunch franka_gazebo fr3_with_soft_contact.launch force_profile_type:=sine force_sine_amplitude:=2.0 force_sine_frequency:=0.5
+```
+
+#### 3. 阶跃变化力
+```bash
+roslaunch franka_gazebo fr3_with_soft_contact.launch force_profile_type:=step force_step_time:=5.0 force_step_value:=15.0
+```
+
+#### 4. 启用力噪音
+```bash
+roslaunch franka_gazebo fr3_with_soft_contact.launch force_profile_type:=constant force_noise_enable:=true force_noise_min:=-2.0 force_noise_max:=2.0
+```
+
+#### 5. 关闭力噪音（默认）
+```bash
+roslaunch franka_gazebo fr3_with_soft_contact.launch force_profile_type:=constant force_noise_enable:=false
+```
+
+你可以将上述参数与轨迹参数组合使用，实现任意轨迹+任意力变化的实验。

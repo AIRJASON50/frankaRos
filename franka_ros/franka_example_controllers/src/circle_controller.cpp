@@ -8,6 +8,7 @@
 #include <iomanip>
 #include <chrono>
 #include <ctime>
+#include <random>
 
 #include <controller_interface/controller_base.h>
 #include <franka/robot_state.h>
@@ -17,6 +18,8 @@
 #include <std_msgs/String.h>
 #include <geometry_msgs/WrenchStamped.h>
 #include <ros/package.h>
+#include <nav_msgs/Path.h>
+#include <geometry_msgs/PoseStamped.h>
 
 #include <franka_example_controllers/pseudo_inversion.h>
 
@@ -147,19 +150,27 @@ void CircleController::stopping(const ros::Time& time) {
 
 // 轨迹生成函数 - 根据当前轨迹类型生成目标位置
 Eigen::Vector3d CircleController::generateTrajectory(double time) {
+  // 应用速度因子来调整轨迹速度（speed_factor_越小，速度越慢）
+  double adjusted_time = time * speed_factor_;
+  
+  // 增加预测时间以减少跟踪延迟 - 预测机械臂的控制延迟
+  double prediction_time = 0.05; // 预测50ms的轨迹，提前确定目标位置
+  double predicted_time = adjusted_time + prediction_time;
+  
+  // 根据轨迹类型生成目标位置
   switch (trajectory_type_) {
     case CIRCULAR:
-      return generateCircularTrajectory(time);
+      return generateCircularTrajectory(predicted_time);
     case RECTANGULAR:
-      return generateRectangularTrajectory(time);
+      return generateRectangularTrajectory(predicted_time);
     case FIGURE_EIGHT:
-      return generateFigureEightTrajectory(time);
+      return generateFigureEightTrajectory(predicted_time);
     case LINE:
-      return generateLineTrajectory(time);
+      return generateLineTrajectory(predicted_time);
     case CUSTOM:
-      return generateCustomTrajectory(time);
+      return generateCustomTrajectory(predicted_time);
     default:
-      return generateCircularTrajectory(time);
+      return generateCircularTrajectory(predicted_time);
   }
 }
 
@@ -489,6 +500,7 @@ bool CircleController::init(hardware_interface::RobotHW* robot_hw,
   // 读取力控制参数
   ros::NodeHandle force_nh(node_handle, "force_controller");
   force_nh.getParam("target_force", target_force_);
+  base_force_ = target_force_; // 初始化力轨迹基准
   force_nh.getParam("kp", force_p_gain_);
   force_nh.getParam("ki", force_i_gain_);
   force_nh.getParam("kd", force_d_gain_);
@@ -502,6 +514,11 @@ bool CircleController::init(hardware_interface::RobotHW* robot_hw,
   // 读取相位持续时间
   node_handle.getParam("phase_duration", phase_duration_);
   
+  // 读取速度因子参数
+  if (!node_handle.getParam("speed_factor", speed_factor_)) {
+    ROS_INFO_STREAM("CircleController: Using default speed factor: " << speed_factor_);
+  }
+  
   // 初始化软接触模型
   contact_model_ = std::make_unique<franka_example_controllers::SoftContactModel>(
       node_handle, contact_params_);
@@ -510,6 +527,7 @@ bool CircleController::init(hardware_interface::RobotHW* robot_hw,
   pose_pub_ = node_handle.advertise<geometry_msgs::PoseStamped>("equilibrium_pose", 10);
   contact_pub_ = node_handle.advertise<geometry_msgs::WrenchStamped>("contact_force", 10);
   phase_pub_ = node_handle.advertise<std_msgs::String>("control_phase", 10);
+  path_pub_ = node_handle.advertise<nav_msgs::Path>("trajectory_path", 1);
 
   // 获取机器人模型接口
   auto* model_interface = robot_hw->get<franka_hw::FrankaModelInterface>();
@@ -569,8 +587,8 @@ bool CircleController::init(hardware_interface::RobotHW* robot_hw,
   }
 
   // 设置笛卡尔阻抗控制参数（在开环控制中仅用于计算虚拟力矩）
-  double translational_stiffness = 100.0;  // 位置刚度：100.0 N/m
-  double rotational_stiffness = 20.0;      // 姿态刚度：20.0 Nm/rad
+  double translational_stiffness = 600.0;  // 位置刚度提高到600.0 N/m (原100.0)
+  double rotational_stiffness = 50.0;      // 姿态刚度提高到50.0 Nm/rad (原20.0)
   
   cartesian_stiffness_.setZero();
   cartesian_stiffness_.topLeftCorner(3, 3)
@@ -586,6 +604,30 @@ bool CircleController::init(hardware_interface::RobotHW* robot_hw,
 
   // 初始化日志文件
   initLogFile();
+
+  // 读取力轨迹类型参数
+  std::string force_profile_type_str;
+  if (force_nh.getParam("force_profile_type", force_profile_type_str)) {
+    if (force_profile_type_str == "constant") {
+      force_profile_type_ = FORCE_CONSTANT;
+    } else if (force_profile_type_str == "sine") {
+      force_profile_type_ = FORCE_SINE;
+    } else if (force_profile_type_str == "step") {
+      force_profile_type_ = FORCE_STEP;
+    } else {
+      ROS_WARN_STREAM("Unknown force_profile_type: " << force_profile_type_str << ", using constant.");
+      force_profile_type_ = FORCE_CONSTANT;
+    }
+  }
+  force_nh.param<double>("force_sine_amplitude", force_sine_amplitude_, 0.0);
+  force_nh.param<double>("force_sine_frequency", force_sine_frequency_, 1.0);
+  force_nh.param<double>("force_step_time", force_step_time_, 5.0);
+  force_nh.param<double>("force_step_value", force_step_value_, 0.0);
+
+  // 读取力噪音参数
+  force_nh.param("force_noise_enable", force_noise_enable_, false);
+  force_nh.param("force_noise_min", force_noise_min_, 1.0);
+  force_nh.param("force_noise_max", force_noise_max_, 2.0);
 
   return true;
 }
@@ -643,12 +685,24 @@ void CircleController::starting(const ros::Time& time) {
   
   // 重置计数器
   circular_counter_ = 0;
+  
+  // 发布初始轨迹路径
+  publishTrajectoryPath();
 }
 
 void CircleController::update(const ros::Time& time,
                              const ros::Duration& period) {
   // 累计经过的时间（用于计算圆周轨迹）
   elapsed_time_ += period.toSec();
+  
+  // 动态更新目标力
+  target_force_ = generateForceProfile(elapsed_time_);
+  
+  // 更新轨迹路径可视化 - 每10个周期更新一次，平衡性能和可视化效果
+  if (circular_counter_ % 10 == 0) {
+    publishTrajectoryPath();
+  }
+  circular_counter_++;
   
   // =====================================================================
   // 1. 获取当前状态：传感器读数
@@ -827,6 +881,12 @@ void CircleController::update(const ros::Time& time,
     // 仅调整z方向位置（沿法线方向）
     position_d_[2] += position_adjustment;
     
+    // 若启用力噪音，给position_d_叠加三维扰动
+    if (force_noise_enable_) {
+      Eigen::Vector3d noise = generateForceNoise() * 0.001; // 转为最大2mm扰动
+      position_d_ += noise;
+    }
+    
     if (circular_counter_ % 1000 == 0) {
       ROS_INFO_STREAM("力控制: 当前力 " << current_contact_state.contact_force << "N, 目标力 " 
                     << target_force_ << "N, 调整量 " << position_adjustment * 1000 << "mm");
@@ -864,6 +924,12 @@ void CircleController::update(const ros::Time& time,
     
     // 仅调整z方向位置（沿法线方向）
     position_d_[2] += position_adjustment;
+    
+    // 若启用力噪音，给position_d_叠加三维扰动
+    if (force_noise_enable_) {
+      Eigen::Vector3d noise = generateForceNoise() * 0.001; // 转为最大2mm扰动
+      position_d_ += noise;
+    }
     
     // 打印调试信息
     if (circular_counter_ % 1000 == 0) {
@@ -1054,7 +1120,7 @@ void CircleController::update(const ros::Time& time,
   }
   else if (control_phase_ == TRAJECTORY) {
     // 轨迹运动阶段
-    if (circular_counter_++ % 1000 == 0) {
+    if (circular_counter_ % 1000 == 0) {
       ROS_INFO_STREAM("轨迹运动阶段: 已持续 " << elapsed_time_ << " 秒");
       switch (trajectory_type_) {
         case CIRCULAR:
@@ -1074,28 +1140,40 @@ void CircleController::update(const ros::Time& time,
           break;
       }
       ROS_INFO_STREAM("机械臂位置: [" << position.transpose() << "]");
+      
+      // 轨迹路径现在在update函数顶部定期更新，此处不再需要
+      // publishTrajectoryPath();
     }
     
-    // 生成当前轨迹点
+    // 生成当前轨迹点 - 添加前馈控制
+    // 计算期望位置、速度和加速度
+    
+    // 当前时间对应的期望位置
     Eigen::Vector3d trajectory_position = generateTrajectory(elapsed_time_);
+    
+    // 计算轨迹目标速度和加速度 - 使用更高精度的中心差分
+    double dt = 0.001; // 1毫秒的时间步长
+    Eigen::Vector3d trajectory_position_prev = generateTrajectory(elapsed_time_ - dt);
+    Eigen::Vector3d trajectory_position_next = generateTrajectory(elapsed_time_ + dt);
+    
+    // 更精确的速度计算 - 使用中心差分
+    position_d_dot = (trajectory_position_next - trajectory_position_prev) / (2.0 * dt);
+    
+    // 更精确的加速度计算 - 使用中心差分
+    position_d_ddot = (trajectory_position_next - 2.0 * trajectory_position + trajectory_position_prev) / (dt * dt);
     
     // 更新期望位置的XY坐标（Z坐标由力控制决定）
     position_d_[0] = trajectory_position[0];
     position_d_[1] = trajectory_position[1];
     
-    // 计算期望速度（这部分可以根据需要进一步实现各轨迹类型的速度函数）
-    // 这里简化为使用有限差分计算速度（前向差分）
-    double dt = 0.001; // 1毫秒的时间步长
-    Eigen::Vector3d next_position = generateTrajectory(elapsed_time_ + dt);
-    position_d_dot = (next_position - trajectory_position) / dt;
-    
-    // 简化的加速度计算（二阶差分）
-    Eigen::Vector3d next_next_position = generateTrajectory(elapsed_time_ + 2*dt);
-    position_d_ddot = (next_next_position - 2*next_position + trajectory_position) / (dt*dt);
+    // 应用前馈控制补偿物理延迟 - 基于速度和加速度的预测修正
+    // 这将使控制器更快地响应轨迹变化
+    double feed_forward_time = 0.01; // 10ms的前馈预测
+    position_d_[0] += position_d_dot(0) * feed_forward_time + 0.5 * position_d_ddot(0) * feed_forward_time * feed_forward_time;
+    position_d_[1] += position_d_dot(1) * feed_forward_time + 0.5 * position_d_ddot(1) * feed_forward_time * feed_forward_time;
     
     // 力控制 - 保持恒定接触力
     // 通过软接触模型计算接触力并调整轨迹
-    // 如果未检测到接触，尝试寻找接触
     if (!current_contact_state.in_contact) {
       // 如果失去接触，轻微向下移动以重新建立接触
       position_d_[2] -= 0.0005; // 每次向下移动0.5mm
@@ -1131,6 +1209,12 @@ void CircleController::update(const ros::Time& time,
       
       // 仅调整z方向位置（沿法线方向）
       position_d_[2] += position_adjustment;
+      
+      // 若启用力噪音，给position_d_叠加三维扰动
+      if (force_noise_enable_) {
+        Eigen::Vector3d noise = generateForceNoise() * 0.001; // 转为最大2mm扰动
+        position_d_ += noise;
+      }
       
       if (circular_counter_ % 1000 == 0) {
         ROS_INFO_STREAM("力控制: 当前力 " << current_contact_state.contact_force << "N, 目标力 " 
@@ -1285,6 +1369,199 @@ Eigen::Matrix<double, 7, 1> CircleController::saturateTorqueRate(
         tau_J_d[i] + std::max(std::min(difference, delta_tau_max_), -delta_tau_max_);
   }
   return tau_d_saturated;
+}
+
+// 实现发布轨迹路径的函数
+void CircleController::publishTrajectoryPath() {
+  // 创建路径消息
+  nav_msgs::Path path_msg;
+  path_msg.header.stamp = ros::Time::now();
+  path_msg.header.frame_id = "world";
+  
+  // 历史和预测点数量
+  int num_history_points = 100;   // 历史轨迹点数量 - 增加到100
+  int num_future_points = 200;   // 未来轨迹点数量 - 增加到200
+  
+  // 时间步长 - 以毫秒为单位
+  double dt = 0.02; // 20ms的间隔
+  
+  // 当前时间
+  double current_time = elapsed_time_;
+  
+  // 将路径置于软体平台表面高度
+  double path_z_height = soft_block_position_(2);
+  
+  // 生成过去的历史轨迹点 (当前时间之前)
+  for (int i = num_history_points; i > 0; i--) {
+    // 计算过去时间点
+    double past_time = current_time - i * dt;
+    
+    // 确保时间不为负
+    if (past_time < 0) {
+      continue;
+    }
+    
+    // 根据当前轨迹类型生成历史位置
+    Eigen::Vector3d point;
+    switch (trajectory_type_) {
+      case CIRCULAR:
+        point = generateCircularTrajectory(past_time * speed_factor_);
+        break;
+      case RECTANGULAR:
+        point = generateRectangularTrajectory(past_time * speed_factor_);
+        break;
+      case FIGURE_EIGHT:
+        point = generateFigureEightTrajectory(past_time * speed_factor_);
+        break;
+      case LINE:
+        point = generateLineTrajectory(past_time * speed_factor_);
+        break;
+      case CUSTOM:
+        point = generateCustomTrajectory(past_time * speed_factor_);
+        break;
+      default:
+        point = generateCircularTrajectory(past_time * speed_factor_);
+        break;
+    }
+    
+    // 设置轨迹Z坐标为软体平台表面高度
+    point(2) = path_z_height;
+    
+    // 创建位姿点
+    geometry_msgs::PoseStamped pose;
+    pose.header = path_msg.header;
+    pose.pose.position.x = point(0);
+    pose.pose.position.y = point(1);
+    pose.pose.position.z = point(2);
+    
+    // 使用当前方向
+    pose.pose.orientation.x = orientation_d_.x();
+    pose.pose.orientation.y = orientation_d_.y();
+    pose.pose.orientation.z = orientation_d_.z();
+    pose.pose.orientation.w = orientation_d_.w();
+    
+    path_msg.poses.push_back(pose);
+  }
+  
+  // 添加当前时间点
+  {
+    Eigen::Vector3d current_point;
+    switch (trajectory_type_) {
+      case CIRCULAR:
+        current_point = generateCircularTrajectory(current_time * speed_factor_);
+        break;
+      case RECTANGULAR:
+        current_point = generateRectangularTrajectory(current_time * speed_factor_);
+        break;
+      case FIGURE_EIGHT:
+        current_point = generateFigureEightTrajectory(current_time * speed_factor_);
+        break;
+      case LINE:
+        current_point = generateLineTrajectory(current_time * speed_factor_);
+        break;
+      case CUSTOM:
+        current_point = generateCustomTrajectory(current_time * speed_factor_);
+        break;
+      default:
+        current_point = generateCircularTrajectory(current_time * speed_factor_);
+        break;
+    }
+    
+    current_point(2) = path_z_height;
+    
+    geometry_msgs::PoseStamped current_pose;
+    current_pose.header = path_msg.header;
+    current_pose.pose.position.x = current_point(0);
+    current_pose.pose.position.y = current_point(1);
+    current_pose.pose.position.z = current_point(2);
+    current_pose.pose.orientation.x = orientation_d_.x();
+    current_pose.pose.orientation.y = orientation_d_.y();
+    current_pose.pose.orientation.z = orientation_d_.z();
+    current_pose.pose.orientation.w = orientation_d_.w();
+    
+    path_msg.poses.push_back(current_pose);
+  }
+  
+  // 生成未来轨迹点 (当前时间之后)
+  for (int i = 1; i <= num_future_points; i++) {
+    // 计算未来时间点
+    double future_time = current_time + i * dt;
+    
+    // 根据当前轨迹类型生成位置
+    Eigen::Vector3d point;
+    switch (trajectory_type_) {
+      case CIRCULAR:
+        point = generateCircularTrajectory(future_time * speed_factor_);
+        break;
+      case RECTANGULAR:
+        point = generateRectangularTrajectory(future_time * speed_factor_);
+        break;
+      case FIGURE_EIGHT:
+        point = generateFigureEightTrajectory(future_time * speed_factor_);
+        break;
+      case LINE:
+        point = generateLineTrajectory(future_time * speed_factor_);
+        break;
+      case CUSTOM:
+        point = generateCustomTrajectory(future_time * speed_factor_);
+        break;
+      default:
+        point = generateCircularTrajectory(future_time * speed_factor_);
+        break;
+    }
+    
+    // 设置轨迹Z坐标为软体平台表面高度
+    point(2) = path_z_height;
+    
+    // 创建位姿点
+    geometry_msgs::PoseStamped pose;
+    pose.header = path_msg.header;
+    pose.pose.position.x = point(0);
+    pose.pose.position.y = point(1);
+    pose.pose.position.z = point(2);
+    
+    // 使用当前方向
+    pose.pose.orientation.x = orientation_d_.x();
+    pose.pose.orientation.y = orientation_d_.y();
+    pose.pose.orientation.z = orientation_d_.z();
+    pose.pose.orientation.w = orientation_d_.w();
+    
+    path_msg.poses.push_back(pose);
+  }
+  
+  // 发布路径消息
+  path_pub_.publish(path_msg);
+}
+
+// 力轨迹生成函数
+// 支持恒定、正弦、阶跃三种类型
+// target_force_为恒定力基准
+double CircleController::generateForceProfile(double time) {
+  double force = 0.0;
+  switch (force_profile_type_) {
+    case FORCE_CONSTANT:
+      force = base_force_;
+      break;
+    case FORCE_SINE:
+      force = base_force_ + force_sine_amplitude_ * std::sin(2 * M_PI * force_sine_frequency_ * time);
+      break;
+    case FORCE_STEP:
+      force = (time < force_step_time_) ? base_force_ : force_step_value_;
+      break;
+    default:
+      force = base_force_;
+  }
+  if (force_noise_enable_) {
+    force += generateForceNoise().norm();
+  }
+  return force;
+}
+
+Eigen::Vector3d CircleController::generateForceNoise() {
+  static std::random_device rd;
+  static std::mt19937 gen(rd());
+  std::uniform_real_distribution<> dis(force_noise_min_, force_noise_max_);
+  return Eigen::Vector3d(dis(gen), dis(gen), dis(gen));
 }
 
 }  // namespace franka_example_controllers

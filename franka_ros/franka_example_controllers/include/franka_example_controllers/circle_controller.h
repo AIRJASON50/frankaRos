@@ -50,6 +50,13 @@ class CircleController : public controller_interface::MultiInterfaceController<
     CUSTOM = 4       // 自定义轨迹
   };
 
+  // 力轨迹类型枚举
+  enum ForceProfileType {
+    FORCE_CONSTANT = 0, // 恒定力
+    FORCE_SINE = 1,    // 正弦变化力
+    FORCE_STEP = 2     // 阶跃力
+  };
+
   // 轨迹生成函数
   Eigen::Vector3d generateTrajectory(double time);
   Eigen::Vector3d generateCircularTrajectory(double time);
@@ -78,6 +85,7 @@ class CircleController : public controller_interface::MultiInterfaceController<
   double circle_frequency_{0.5};  // 圆周运动频率（Hz）
   double elapsed_time_{0.0};  // 已经过的时间（秒）
   std::string circle_plane_{"yz"};  // 圆周运动平面，可选值: "xy", "xz", "yz"，默认为"yz"（垂直于地面）
+  double speed_factor_{0.1};  // 速度因子，控制轨迹运动速度，值越小移动越慢
   
   // 矩形轨迹参数
   double rect_length_{0.2};    // 矩形长度
@@ -156,6 +164,7 @@ class CircleController : public controller_interface::MultiInterfaceController<
   
   // 恒力控制参数
   double target_force_{10.0};
+  double base_force_{10.0}; // 力轨迹基准
   double force_error_integral_{0.0};
   double last_force_error_{0.0};
   double prev_force_error_{0.0}; // 之前的力误差，用于计算微分项
@@ -171,6 +180,7 @@ class CircleController : public controller_interface::MultiInterfaceController<
   ros::Publisher phase_pub_;
   ros::Publisher pose_pub_;
   ros::Publisher contact_pub_; // 发布接触力信息
+  ros::Publisher path_pub_;    // 发布轨迹路径
   
   // 添加计数器变量，用于控制调试信息输出频率
   int circular_counter_{0};
@@ -181,6 +191,16 @@ class CircleController : public controller_interface::MultiInterfaceController<
   int log_counter_{0};
   bool log_initialized_{false};
   ros::Time start_time_;
+  
+  // 力轨迹类型
+  ForceProfileType force_profile_type_{FORCE_CONSTANT};
+  // 力轨迹参数
+  double force_sine_amplitude_{0.0};
+  double force_sine_frequency_{1.0};
+  double force_step_time_{5.0};
+  double force_step_value_{0.0};
+  // 力轨迹生成函数
+  double generateForceProfile(double time);
   
   /**
    * @brief 初始化日志文件
@@ -201,6 +221,18 @@ class CircleController : public controller_interface::MultiInterfaceController<
    */
   void logData(const ros::Time& time, const Eigen::Vector3d& position, 
                const Eigen::Vector3d& force, int phase);
+               
+  /**
+   * @brief 发布当前轨迹类型的完整路径可视化
+   * @param time 当前时间
+   */
+  void publishTrajectoryPath();
+
+  // 力噪音参数
+  bool force_noise_enable_{false};
+  double force_noise_min_{-2.0};
+  double force_noise_max_{2.0};
+  Eigen::Vector3d generateForceNoise();
 };
 
 }  // namespace franka_example_controllers 
