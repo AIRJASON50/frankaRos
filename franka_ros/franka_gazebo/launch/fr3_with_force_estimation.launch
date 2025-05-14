@@ -1,0 +1,136 @@
+<?xml version="1.0" ?>
+<!-- 
+  描述: FR3机器人软接触仿真与力估计启动文件
+  
+  此启动文件在fr3_with_soft_contact.launch的基础上增加了软接触力估计器，
+  用于对比Gazebo仿真力与基于软接触模型的理论估计力
+  
+  使用示例：
+  roslaunch franka_gazebo fr3_with_force_estimation.launch 
+-->
+<launch>
+  <!-- 轨迹类型和参数配置，继承自fr3_with_soft_contact.launch -->
+  <arg name="trajectory_type" default="circular" doc="轨迹类型 (circular/rectangular/figure_eight/line/custom)"/>
+  
+  <!-- 通用轨迹参数 -->
+  <arg name="circle_frequency" default="0.3" doc="轨迹运动频率 [Hz]"/>
+  <arg name="center_x" default="0.4" doc="轨迹中心点X坐标 [m]"/>
+  <arg name="center_y" default="0.0" doc="轨迹中心点Y坐标 [m]"/>
+  <arg name="center_z" default="0.505" doc="轨迹中心点Z坐标 [m]"/>
+  <arg name="speed_factor" default="0.2" doc="轨迹运动速度因子，值越小移动越慢"/>
+  
+  <!-- 圆形轨迹参数 -->
+  <arg name="circle_radius" default="0.1" doc="圆周运动半径 [m]"/>
+  <arg name="circle_plane" default="xy" doc="圆周运动平面 (xy/xz/yz)"/>
+  
+  <!-- 矩形轨迹参数 -->
+  <arg name="rect_length" default="0.2" doc="矩形长度 [m]"/>
+  <arg name="rect_width" default="0.1" doc="矩形宽度 [m]"/>
+  
+  <!-- 八字形轨迹参数 -->
+  <arg name="eight_radius_x" default="0.1" doc="八字形X轴半径 [m]"/>
+  <arg name="eight_radius_y" default="0.05" doc="八字形Y轴半径 [m]"/>
+  
+  <!-- 直线轨迹参数 -->
+  <arg name="line_length" default="0.2" doc="直线长度 [m]"/>
+  
+  <!-- 自定义轨迹参数 -->
+  <arg name="custom_trajectory_file" default="" doc="自定义轨迹文件路径"/>
+
+  <!-- 力轨迹类型参数 -->
+  <arg name="force_profile_type" default="constant" doc="力轨迹类型 (constant/sine/step)"/>
+  <arg name="force_sine_amplitude" default="0.0" doc="正弦力幅值 [N]"/>
+  <arg name="force_sine_frequency" default="1.0" doc="正弦力频率 [Hz]"/>
+  <arg name="force_step_time" default="5.0" doc="阶跃力变化时刻 [s]"/>
+  <arg name="force_step_value" default="0.0" doc="阶跃后力值 [N]"/>
+
+  <!-- 力噪音参数 -->
+  <arg name="force_noise_enable" default="false" doc="是否启用力噪音 (true/false)"/>
+  <arg name="force_noise_min" default="1.0" doc="力噪音最小值 [N]"/>
+  <arg name="force_noise_max" default="2.0" doc="力噪音最大值 [N]"/>
+
+  <!-- 软接触模型参数 -->
+  <arg name="young_modulus" default="1000.0" doc="软体杨氏模量 [Pa]"/>
+  <arg name="poisson_ratio" default="0.45" doc="软体泊松比"/>
+  <arg name="friction_coef" default="0.3" doc="摩擦系数"/>
+  <arg name="contact_radius" default="0.01" doc="接触探头半径 [m]"/>
+  
+  <!-- 接触检测参数 -->
+  <arg name="contact_depth_threshold" default="0.0005" doc="接触深度阈值 [m]"/>
+  
+  <!-- 力突变检测参数 -->
+  <arg name="force_change_threshold" default="5" doc="力变化阈值 [N]"/>
+  <arg name="force_window_size" default="5" doc="力历史窗口大小"/>
+  <arg name="use_force_change_detection" default="true" doc="是否使用力变化检测"/>
+  <arg name="absolute_force_threshold" default="8.0" doc="绝对力检测阈值 [N]"/>
+  <arg name="use_absolute_force_detection" default="true" doc="是否使用绝对力值检测"/>
+  <arg name="debug_mode" default="true" doc="是否启用调试模式"/>
+  <arg name="soft_block_surface_z" default="0.575" doc="软块表面的Z坐标 [m]"/>
+
+  <!-- 启动基础仿真 -->
+  <include file="$(find franka_gazebo)/launch/fr3_with_soft_contact.launch">
+    <arg name="trajectory_type" value="$(arg trajectory_type)"/>
+    <arg name="circle_frequency" value="$(arg circle_frequency)"/>
+    <arg name="circle_radius" value="$(arg circle_radius)"/>
+    <arg name="circle_plane" value="$(arg circle_plane)"/>
+    <arg name="center_x" value="$(arg center_x)"/>
+    <arg name="center_y" value="$(arg center_y)"/>
+    <arg name="center_z" value="$(arg center_z)"/>
+    <arg name="speed_factor" value="$(arg speed_factor)"/>
+    <arg name="rect_length" value="$(arg rect_length)"/>
+    <arg name="rect_width" value="$(arg rect_width)"/>
+    <arg name="eight_radius_x" value="$(arg eight_radius_x)"/>
+    <arg name="eight_radius_y" value="$(arg eight_radius_y)"/>
+    <arg name="line_length" value="$(arg line_length)"/>
+    <arg name="custom_trajectory_file" value="$(arg custom_trajectory_file)"/>
+    <arg name="force_profile_type" value="$(arg force_profile_type)"/>
+    <arg name="force_sine_amplitude" value="$(arg force_sine_amplitude)"/>
+    <arg name="force_sine_frequency" value="$(arg force_sine_frequency)"/>
+    <arg name="force_step_time" value="$(arg force_step_time)"/>
+    <arg name="force_step_value" value="$(arg force_step_value)"/>
+    <arg name="force_noise_enable" value="$(arg force_noise_enable)"/>
+    <arg name="force_noise_min" value="$(arg force_noise_min)"/>
+    <arg name="force_noise_max" value="$(arg force_noise_max)"/>
+  </include>
+  
+  <!-- 启动软接触力估计器节点 -->
+  <node name="soft_contact_force_estimator" pkg="franka_example_controllers" type="soft_contact_force_estimator" output="screen">
+    <!-- 软接触模型参数 -->
+    <param name="contact_model/young_modulus" value="$(arg young_modulus)"/>
+    <param name="contact_model/poisson_ratio" value="$(arg poisson_ratio)"/>
+    <param name="contact_model/friction_coef" value="$(arg friction_coef)"/>
+    <param name="contact_model/contact_radius" value="$(arg contact_radius)"/>
+    <param name="contact_model/path_radius" value="$(arg circle_radius)"/>
+    <param name="contact_model/damping" value="50.0"/>
+    <param name="contact_model/depth_threshold" value="$(arg contact_depth_threshold)"/>
+    
+    <!-- 力检测参数 -->
+    <param name="force_change_threshold" value="$(arg force_change_threshold)"/>
+    <param name="force_window_size" value="$(arg force_window_size)"/>
+    <param name="use_force_change_detection" value="$(arg use_force_change_detection)"/>
+    <param name="absolute_force_threshold" value="$(arg absolute_force_threshold)"/>
+    <param name="use_absolute_force_detection" value="$(arg use_absolute_force_detection)"/>
+    <param name="debug_mode" value="$(arg debug_mode)"/>
+    <param name="soft_block_surface_z" value="$(arg soft_block_surface_z)"/>
+    
+    <!-- 重映射话题 -->
+    <remap from="~estimated_force" to="/estimated_force"/>
+    <remap from="~force_comparison" to="/force_comparison"/>
+  </node>
+  
+  <!-- 关闭父启动文件中所有的rqt_plot -->
+  <node name="kill_parent_rqt" pkg="rosnode" type="rosnode" args="kill /rqt_force_plot /rqt_position_plot /rqt_ext_wrench_plot" output="screen" />
+  
+  <!-- 只保留一个力对比rqt_plot，显示Gazebo力(红线)和估计力(绿线) -->
+  <node name="rqt_force_comparison" pkg="rqt_plot" type="rqt_plot" 
+        args="/force_comparison/wrench/force/z /estimated_force/wrench/force/z" 
+        respawn="true" output="screen" />
+  
+  <!-- 启动接触状态记录器 -->
+  <node pkg="rosbag" type="record" name="force_estimation_recorder" 
+        args="-O $(find franka_example_controllers)/data/force_estimation.bag 
+              /estimated_force
+              /force_comparison
+              /franka_state_controller/F_ext
+              /circle_controller/equilibrium_pose" />
+</launch> 
