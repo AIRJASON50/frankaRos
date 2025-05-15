@@ -47,4 +47,4 @@ __pycache__/
 install/
 logs/
 devel/
-build/
+build/franka_ros/franka_example_controllers/data/contact_data.bag
