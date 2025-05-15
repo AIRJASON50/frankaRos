@@ -8,6 +8,8 @@
 ## 功能特点
 - 独立设计的力探头末端执行器，可测量接触力
 - 多种控制模式：圆周运动、矩形运动、八字形、直线往返和自定义轨迹等
+- 多种力轨迹模式：恒定力、正弦变化力、阶跃力
+- 支持力噪声干扰，便于测试鲁棒性
 - 模拟软硬表面的接触场景
 - 优化的机器人初始姿态，避免碰撞
 - 完整的力反馈数据获取接口
@@ -66,6 +68,38 @@ roslaunch franka_gazebo fr3_with_soft_contact.launch trajectory_type:=circular
 - `linear`: 直线往返轨迹
 - `custom`: 自定义轨迹（从CSV文件读取）
 
+### 力轨迹类型选择
+
+支持不同的力变化模式，通过`force_profile_type`参数指定：
+```bash
+roslaunch franka_gazebo fr3_with_soft_contact.launch force_profile_type:=sine
+```
+
+可用力轨迹类型：
+- `constant`: 恒定力（默认）
+- `sine`: 正弦变化力
+- `step`: 阶跃力
+
+### 力轨迹参数设置
+
+1. **正弦力轨迹参数**：
+   ```bash
+   # 设置正弦力振幅(牛顿)和频率(赫兹)
+   roslaunch franka_gazebo fr3_with_soft_contact.launch force_profile_type:=sine force_sine_amplitude:=5.0 force_sine_frequency:=0.5
+   ```
+
+2. **阶跃力轨迹参数**：
+   ```bash
+   # 设置阶跃时间(秒)和阶跃后力值(牛顿)
+   roslaunch franka_gazebo fr3_with_soft_contact.launch force_profile_type:=step force_step_time:=5.0 force_step_value:=15.0
+   ```
+
+3. **力噪声参数**：
+   ```bash
+   # 启用力噪声并设置噪声范围
+   roslaunch franka_gazebo fr3_with_soft_contact.launch force_noise_enable:=true force_noise_min:=-2.0 force_noise_max:=2.0
+   ```
+
 ### 控制参数设置
 
 1. **力控参数**：
@@ -110,7 +144,25 @@ roslaunch franka_gazebo fr3_with_soft_contact.launch youngs_modulus:=1000.0 pois
 ```bash
 # 在矩形轨迹上以8N的力运行，速度为默认的1.5倍
 roslaunch franka_gazebo fr3_with_soft_contact.launch trajectory_type:=rectangular target_force:=8.0 speed_factor:=1.5 rect_width:=0.15 rect_height:=0.1
+
+# 圆形轨迹 + 正弦力变化 + 2倍速度
+roslaunch franka_gazebo fr3_with_soft_contact.launch trajectory_type:=circular force_profile_type:=sine force_sine_amplitude:=3.0 force_sine_frequency:=0.5 speed_factor:=2.0
+
+# 八字形轨迹 + 阶跃力变化 + 力噪声
+roslaunch franka_gazebo fr3_with_soft_contact.launch trajectory_type:=figure_eight force_profile_type:=step force_step_time:=5.0 force_step_value:=15.0 force_noise_enable:=true
+
+# 自定义轨迹 + 恒定力 + 硬接触表面
+roslaunch franka_gazebo fr3_with_soft_contact.launch trajectory_type:=custom custom_trajectory_file:=heart_path.csv youngs_modulus:=5000.0
 ```
+
+### 力估计对比实验
+
+要运行带力估计对比的仿真：
+```bash
+roslaunch franka_gazebo fr3_with_force_estimation.launch
+```
+
+此启动文件将显示Gazebo模拟力和理论估计力的对比图，并记录详细的力数据日志用于分析。
 
 ### 日志与数据记录
 
@@ -130,6 +182,31 @@ cat force_data_YYYYMMDD_HHMMSS.csv
 2. 调整探头质量从1.96kg到0.5kg，提高末端姿态稳定性
 3. 增强控制器参数，改善末端轨迹跟踪
 4. 添加多种轨迹类型支持，包括矩形、八字形、直线往返和自定义轨迹
+5. 实现模块化力轨迹生成器，支持恒定力、正弦变化力和阶跃力
+6. 添加力噪声功能，便于测试控制器稳健性
+7. 增加力估计对比工具，支持理论模型与实际测量力比较
+
+## 项目结构
+```
+franka_ros/
+├── franka_example_controllers/             # 主控制器包
+│   ├── include/franka_example_controllers/
+│   │   ├── circle_controller.h             # 轨迹控制器
+│   │   ├── trajectory_generator.h          # 轨迹生成器
+│   │   ├── force_generator.h               # 力轨迹生成器
+│   │   └── soft_contact_model.h            # 软接触模型
+│   ├── src/
+│   │   ├── circle_controller.cpp           # 控制器实现
+│   │   ├── trajectory_generator.cpp        # 轨迹生成实现
+│   │   ├── force_generator.cpp             # 力轨迹生成实现
+│   │   └── soft_contact_model.cpp          # 接触模型实现
+├── franka_gazebo/                          # 仿真环境包
+│   ├── logs/                               # 日志文件夹
+│   │   └── force_data_*.csv                # 力数据记录
+│   ├── launch/
+│   │   ├── fr3_with_soft_contact.launch    # 基础仿真启动
+│   │   └── fr3_with_force_estimation.launch # 力估计对比启动
+```
 
 ## 自定义轨迹创建与使用
 
@@ -247,9 +324,6 @@ roslaunch franka_gazebo fr3_with_soft_contact.launch trajectory_type:=custom cus
 3. 考虑机器人的工作空间限制，避免轨迹超出范围
 4. 在实际运行前，建议先以低速测试自定义轨迹
 5. Z轴方向的运动会影响接触力，使用时需谨慎设计
-
-## 项目结构
-详细的项目结构和文件说明请参考 `franka_ros/docs/guidence.txt`。
 
 ## 联系方式
 GitHub: [AIRJASON50](https://github.com/AIRJASON50)

@@ -86,6 +86,9 @@ add_library(franka_example_controllers
   src/joint_wall.cpp
   src/circle_controller.cpp
   src/soft_contact_model.cpp
+  src/log_generator.cpp
+  src/trajectory_generator.cpp
+  src/force_generator.cpp
 )
 
 add_dependencies(franka_example_controllers

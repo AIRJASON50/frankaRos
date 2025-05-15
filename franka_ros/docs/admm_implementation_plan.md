@@ -21,10 +21,12 @@ franka_ros/
 │   ├── include/franka_example_controllers/
 │   │   ├── circle_controller.h             # 轨迹控制器（含软接触交互）
 │   │   ├── trajectory_generator.h          # 轨迹生成器
+│   │   ├── force_generator.h               # 力轨迹生成器
 │   │   └── soft_contact_model.h            # 软接触模型
 │   ├── src/
 │   │   ├── circle_controller.cpp           # 轨迹控制器实现
 │   │   ├── trajectory_generator.cpp        # 轨迹生成器实现
+│   │   ├── force_generator.cpp             # 力轨迹生成器实现
 │   │   └── soft_contact_model.cpp          # 软接触模型实现
 │   ├── config/
 │   │   ├── trajectory_controller.yaml      # 通用轨迹控制器配置
@@ -364,3 +366,17 @@ franka_example_controllers/
   - 力变化检测逻辑需调整：当前窗口大小和变化阈值可能需要根据不同材料特性进行适配
   - 运动安排逻辑需优化：考虑添加自适应运动控制，根据接触状态动态调整
   - 日志系统增强：添加更多调试信息，便于问题分析和算法改进
+
+### 2024-05-20
+- 重构了力轨迹生成相关代码，提高模块化：
+  - 创建了独立的ForceGenerator类，从CircleController中提取力轨迹生成逻辑
+  - 实现了ForceGenerator的头文件和源文件
+  - 添加了初始化方法，支持从ROS参数服务器读取配置
+  - 分离了力轨迹生成和力噪声生成功能
+  - 在CircleController中集成ForceGenerator类
+- 解决了编译问题：
+  - 在CircleController中保留force_noise_enable_成员变量
+  - 修复了CMakeLists.txt中的依赖关系
+- 优化了代码结构和注释
+- 确保修改前后功能一致性，验证了力轨迹生成在不同场景下的正确行为
+- 分析了日志文件，确认力控制数据记录正常
