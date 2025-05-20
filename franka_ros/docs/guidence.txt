@@ -550,3 +550,122 @@ roslaunch franka_gazebo fr3_with_independent_probe.launch
 2. 实现多种轨迹模式选择，如圆周、方形、螺旋等
 3. 提高接触检测的稳定性和准确性
 4. 优化与软体物块的交互，模拟不同硬度和形状的软体物体
+
+## 2024年0520更新 - 解决机械臂接触深度稳定性问题
+
+### 问题描述
+在实现机械臂软接触运动功能时，出现了机械臂在接触软块表面后出现"上下弹跳"的问题。具体表现为：
+1. 机械臂在接触软块后无法保持稳定深度
+2. 能够从CONTACT阶段正确过渡到DEPTH_CONTROL阶段，但在过渡到TRAJECTORY阶段时频繁丢失深度稳定性
+3. 进入TRAJECTORY阶段后在Z方向上出现反复弹起和落下的运动
+4. X-Y方向的轨迹运动正常，但Z方向持续不稳定
+
+### 原因分析
+通过分析代码和日志，确定了以下问题：
+1. 目标深度与实际深度存在巨大差异（目标为1mm，实际约23mm）
+2. 深度控制算法参数不适合软接触场景
+3. 轨迹生成器未充分考虑深度信息
+4. 接触检测逻辑在轨迹阶段过于敏感
+5. 控制器状态转换条件不合适
+
+### 解决方案
+1. **接触检测逻辑改进**：
+   ```cpp
+   // 根据当前控制阶段使用不同的接触丢失检测逻辑
+   if (control_phase_ == TRAJECTORY) {
+     // 轨迹阶段使用更大阈值，防止轻微高度变化导致状态切换
+     if (end_position(2) > (soft_block_surface_z_ + 0.035)) { // 35mm阈值
+       contact_detected_ = false;
+     }
+   } else {
+     // 其他阶段使用较小阈值
+     if (end_position(2) > (soft_block_surface_z_ + 0.02)) { // 20mm阈值
+       contact_detected_ = false;
+     }
+   }
+   ```
+
+2. **深度控制算法优化**：
+   ```cpp
+   // 添加深度滤波，避免噪声影响
+   static std::deque<double> depth_filter_buffer;
+   depth_filter_buffer.push_back(contact_depth_);
+   if (depth_filter_buffer.size() > 12) { // 增加滤波窗口
+     depth_filter_buffer.pop_front();
+   }
+   
+   // 计算滤波后的深度值（排除极值后的均值滤波）
+   std::vector<double> sorted_depths(depth_filter_buffer.begin(), depth_filter_buffer.end());
+   std::sort(sorted_depths.begin(), sorted_depths.end());
+   
+   // 去除最高和最低值
+   double filtered_depth = 0.0;
+   if (sorted_depths.size() >= 6) {
+     for (size_t i = 1; i < sorted_depths.size() - 1; ++i) {
+       filtered_depth += sorted_depths[i];
+     }
+     filtered_depth /= (sorted_depths.size() - 2);
+   }
+   ```
+
+3. **状态转换逻辑优化**：
+   ```cpp
+   // 1. 深度稳定性条件 - 放宽深度接近目标的要求，更关注稳定性
+   bool depth_stable = (depth_variance < 0.000008) && (depth_history.size() >= 15); 
+   
+   // 2. 时间条件 - 需要在稳定深度维持至少1.0秒
+   bool time_condition = stability_time > 1.0;
+   
+   // 转换到轨迹阶段时使用实际稳定深度
+   if ((depth_stable && time_condition) || max_time_exceeded) {
+     control_phase_ = TRAJECTORY;
+     // 使用当前稳定深度作为目标深度
+     if (trajectory_generator_) {
+       double actual_depth = contact_depth_;
+       current_center(2) = soft_block_surface_z_ - actual_depth;
+       trajectory_generator_->setCenter(current_center);
+       ROS_INFO("Using actual stable depth: %.3f mm instead of target: %.3f mm",
+                actual_depth * 1000.0, target_depth_ * 1000.0);
+     }
+   }
+   ```
+
+4. **轨迹生成器增强**：
+   ```cpp
+   // 如果在接触状态且需要保持接触深度，调整z高度
+   if (in_contact && contact_required_) {
+     // 将z坐标设置为保持目标深度的高度
+     trajectory_position(2) = soft_block_surface_z_ - target_depth_;
+     
+     // 应用高度修正以确保稳定深度
+     double height_correction = 0.0;
+     
+     // 减小校正率，使调整更平滑
+     height_correction = (current_depth - target_depth_) * 0.3;  // 30%的校正率
+     
+     // 限制单次高度修正量
+     double max_correction = 0.0003;  // 最大修正量0.3mm
+     height_correction = std::max(std::min(height_correction, max_correction), -max_correction);
+     
+     // 应用高度修正
+     trajectory_position(2) -= height_correction;
+   }
+   ```
+
+### 经验教训
+1. **参数调整关键点**：
+   - 为不同控制阶段使用不同的接触阈值参数
+   - 力/深度控制应使用自适应增益以适应不同误差范围
+   - 深度滤波在软体接触中至关重要
+
+2. **控制策略关键点**：
+   - 基于深度稳定性方差比基于目标深度接近度更有效
+   - 在轨迹阶段应该使用实际测量的稳定深度而非预设目标深度
+   - 高度修正应限制在小步长进行，避免大幅度调整
+
+3. **调试方法**：
+   - 使用日志文件分析深度变化模式
+   - 在不同控制阶段输出关键状态变量
+   - 使用方差分析判断参数稳定性
+
+这些修改使机械臂能够在软块表面保持稳定接触深度，成功执行预定轨迹而不出现弹跳现象。
