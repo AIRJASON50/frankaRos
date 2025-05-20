@@ -1,0 +1,114 @@
+circle_controller:
+  type: franka_example_controllers/CircleController
+  arm_id: fr3
+  joint_names:
+    - fr3_joint1
+    - fr3_joint2
+    - fr3_joint3
+    - fr3_joint4
+    - fr3_joint5
+    - fr3_joint6
+    - fr3_joint7
+
+  # 轨迹生成配置
+  trajectory_type: "circular"        # 轨迹类型(circular/rectangular/figure_eight/line/custom)
+  
+  # 轨迹中心点 
+  center_x: 0.4                      # 轨迹中心X [m]
+  center_y: 0.0                      # 轨迹中心Y [m] 
+  center_z: 0.405                    # 轨迹中心Z [m]
+  speed_factor: 0.2                  # 轨迹速度因子
+    
+  # 圆形轨迹参数
+  circle_radius: 0.08                # 圆轨迹半径 [m]
+  circle_frequency: 0.3              # 圆轨迹频率 [Hz]
+  circle_plane: "xy"                 # 圆轨迹平面(xy/xz/yz)
+    
+  # 矩形轨迹参数
+  rect_length: 0.2                   # 矩形长度 [m]
+  rect_width: 0.1                    # 矩形宽度 [m]
+    
+  # 八字形轨迹参数
+  eight_radius_x: 0.1                # X轴半径 [m]
+  eight_radius_y: 0.05               # Y轴半径 [m]
+    
+  # 直线轨迹参数
+  line_length: 0.2                   # 直线长度 [m]
+    
+  # 自定义轨迹参数
+  custom_trajectory_file: ""         # 自定义轨迹文件路径
+
+  # 软接触模型参数 - 基于Hertz-Hunt-Crossley模型
+  contact_model:
+    young_modulus: 1000.0            # 杨氏模量 [Pa] - EcoFlex材料特性
+    poisson_ratio: 0.45              # 泊松比 - 近似不可压缩
+    friction_coef: 0.3               # 摩擦系数 - Coulomb摩擦模型
+    contact_radius: 0.01             # 接触工具半径 [m] - 圆形探针
+    path_radius: 0.1                 # 路径半径 [m] - 圆周运动半径
+    damping: 50.0                    # Hunt-Crossley阻尼系数 [Ns/m]
+    force_threshold: 0.5             # 接触力阈值 [N] - 降低以提高灵敏度
+    depth_threshold: 0.0005          # 接触深度阈值 [m] - 降低以捕获微小接触
+
+  # 控制模式配置
+  control_mode: 0  # 控制模式: 0=深度控制, 1=力控制
+  
+  # 深度控制参数
+  depth_controller:
+    target_depth: 0.001  # 目标深度 [m]
+    p_gain: 1.5         # 比例增益
+    i_gain: 0.2         # 积分增益 - 增加以提高稳定性
+    max_adjustment: 0.005  # 最大调整量 [m]
+
+  # 力控制参数
+  force_controller:
+    target_force: 10.0  # 目标力 [N]
+    p_gain: 0.2         # 比例增益
+    i_gain: 0.02        # 积分增益
+    d_gain: 0.002       # 微分增益
+    max_force: 20.0     # 最大力 [N]
+    
+    # 力轨迹参数
+    force_profile_type: "constant"   # 力轨迹类型(constant/sine/step)
+    force_sine_amplitude: 2.0        # 正弦力幅值 [N]
+    force_sine_frequency: 1.0        # 正弦力频率 [Hz]
+    force_step_time: 5.0             # 阶跃力变化时刻 [s]
+    force_step_value: 5.0            # 阶跃后力值 [N]
+    
+    # 力噪声参数
+    force_noise_enable: false        # 是否启用力噪声
+    force_noise_min: 1.0             # 力噪声最小值 [N]
+    force_noise_max: 2.0             # 力噪声最大值 [N]
+
+  # 探头配置
+  probe:
+    length: 0.114                    # 探头长度 [m] - 从末端法兰到探头尖端的距离
+
+  # 软块配置 (基于世界文件中的实际位置)
+  soft_block:
+    position_x: 0.4                  # 软块X位置 [m]
+    position_y: 0.0                  # 软块Y位置 [m]
+    position_z: 0.425                # 软块Z位置 [m] - 从世界文件获取
+    surface_z: 0.4025                # 软块表面Z坐标 [m] - 从世界文件计算 (中心0.4 + 半厚0.0025)
+    height: 0.005                     # 软块高度 [m] - 修正为5mm厚度，与model.sdf一致
+
+  # 力检测参数
+  force_detection:
+    change_threshold: 5.0            # 力变化阈值 [N]
+    window_size: 5                   # 力历史窗口大小
+    use_change_detection: true       # 是否使用力变化检测
+    absolute_threshold: 8.0          # 绝对力检测阈值 [N]
+    use_absolute_detection: true     # 是否使用绝对力值检测
+
+  # 相位控制参数
+  phase_duration: 3.0                # 每个阶段持续时间 [s]
+  
+  # 调试参数
+  debug_mode: true                   # 是否启用调试模式
+
+  # 参考坐标系
+  reference_frame: world      # 参考坐标系名称
+
+  # 高级参数
+  frequency: 0.5              # 控制频率 [Hz]
+  radius: 0.1                 # 半径 [m]
+  height: 0.5                 # 高度 [m] 

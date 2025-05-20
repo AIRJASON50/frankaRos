@@ -48,11 +48,11 @@
       <uri>model://soft_block</uri>
       <!-- pose参数定义模型在世界中的位置和姿态: [x y z roll pitch yaw]
          当前值(0.4 0 0.405 0 0 0)将软块放在桌面上方
-         z值0.405 = 桌面高度(0.4) + 软块厚度的一半(0.005)
+         z值0.4025 = 桌面高度(0.4) + 软块厚度的一半(0.0025)
          这样软块底部刚好与桌面接触，不会漂浮也不会重叠
       -->
-      <pose>0.4 0 0.405 0 0 0</pose>
-      <name>soft_block</name>
+      <pose>0.4 0 0.4025 0 0 0</pose>
+      <n>soft_block</n>
       <static>1</static>
     </include>
     
