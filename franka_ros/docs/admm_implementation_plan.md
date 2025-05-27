@@ -12,139 +12,84 @@
 - 支持自定义轨迹输入
 - 动态力大小控制
 
-## 2. 项目架构
+##  更新日志
 
-### 2.1 实际包结构
-```
-franka_ros/
-├── franka_example_controllers/             # 主控制器包
-│   ├── include/franka_example_controllers/
-│   │   ├── circle_controller.h             # 轨迹控制器（含软接触交互）
-│   │   ├── trajectory_generator.h          # 轨迹生成器
-│   │   ├── force_generator.h               # 力轨迹生成器
-│   │   ├── log_generator.h                 # 日志生成器
-│   │   └── soft_contact_model.h            # 软接触模型
-│   ├── src/
-│   │   ├── circle_controller.cpp           # 轨迹控制器实现
-│   │   ├── trajectory_generator.cpp        # 轨迹生成器实现
-│   │   ├── force_generator.cpp             # 力轨迹生成器实现
-│   │   ├── log_generator.cpp               # 日志生成器实现
-│   │   └── soft_contact_model.cpp          # 软接触模型实现
-│   ├── config/
-│   │   ├── trajectory_controller.yaml      # 通用轨迹控制器配置
-│   │   └── soft_contact_params.yaml        # 软接触模型参数
-│   ├── launch/
-│   │   ├── fr3_custom_trajectory.launch    # 自定义轨迹启动
-│   │   └── fr3_with_soft_contact.launch    # 软接触测试启动
-├── franka_gazebo/                          # 仿真环境包
-│   ├── logs/                               # 日志文件夹
-│   │   └── force_data_*.csv                # 力数据记录
-```
+### 2024-05-XX
+- 实现了自定义轨迹生成器接口
+- 添加了多种轨迹类型支持（直线、矩形、八字形、自定义）
+- 添加了从文件读取自定义路径功能
+- 优化了轨迹可视化，实现历史轨迹点(100个)和未来预测点(200个)显示
+- 添加了50ms轨迹预测减少跟踪延迟
+- 改进了力控制参数，提高了响应速度
+- 将探头颜色从红色改为白色，提高可视性
+- 实现了恒定/正弦/阶跃/三维扰动力变化，参数可通过launch灵活配置
+- 支持力噪音扰动与力变化类型独立叠加，便于鲁棒性实验
+- launch和README文档完善，支持任意轨迹+任意力变化+扰动组合实验
+- 已知问题：高幅值扰动下实际力跟踪有物理极限，建议合理设置参数
+- 所有代码已上传至GitHub仓库
 
-## 3. 仿真启动方法与参数配置
+### 2024-05-15
+- 实现了软接触力估计器节点，用于理论模型力与Gazebo仿真力对比
+- 优化了力估计的计算与日志记录系统，支持多种数据分析
+- 解决了实现中遇到的几个关键问题：
+  - 修复了机器人位置信息获取问题：从FrankaState消息中提取变换矩阵中的位置数据
+  - 调整力检测阈值：将力变化检测阈值和绝对力阈值分别调整为5N和8N
+  - 优化接触检测逻辑：首次接触需同时满足力变化和力绝对值条件，后续状态维持仅依赖力绝对值
+  - 移除基于深度的接触检测，只使用力变化和绝对力值判断
+  - 增加调试信息输出，记录关键状态变化
+- 问题汇总与后续优化方向：
+  - 深度计算需进一步优化：考虑使用滤波和更精确的参考点
+  - 力变化检测逻辑需调整：当前窗口大小和变化阈值可能需要根据不同材料特性进行适配
+  - 运动安排逻辑需优化：考虑添加自适应运动控制，根据接触状态动态调整
+  - 日志系统增强：添加更多调试信息，便于问题分析和算法改进
 
-### 3.1 基础启动命令
-```bash
-# 基础仿真命令
-roslaunch franka_gazebo fr3_with_soft_contact.launch
+### 2024-05-20
+- 重构了力轨迹生成相关代码，提高模块化：
+  - 创建了独立的ForceGenerator类，从CircleController中提取力轨迹生成逻辑
+  - 实现了ForceGenerator的头文件和源文件
+  - 添加了初始化方法，支持从ROS参数服务器读取配置
+  - 分离了力轨迹生成和力噪声生成功能
+  - 在CircleController中集成ForceGenerator类
+- 解决了编译问题：
+  - 在CircleController中保留force_noise_enable_成员变量
+  - 修复了CMakeLists.txt中的依赖关系
+- 优化了代码结构和注释
+- 确保修改前后功能一致性，验证了力轨迹生成在不同场景下的正确行为
+- 分析了日志文件，确认力控制数据记录正常
 
-# 指定轨迹类型
-roslaunch franka_gazebo fr3_with_soft_contact.launch trajectory_type:=circular
-```
+### 2024-05-25
+- 重构了日志记录系统，提升了代码模块化和可维护性：
+  - 创建了独立的LogGenerator类，实现了日志功能的封装
+  - 将原先在CircleController中的日志功能提取到单独的文件中
+  - 新增了log_generator.h和log_generator.cpp文件
+  - 在CMakeLists.txt中添加了log_generator.cpp的编译配置
+  - 修改了CircleController类，整合LogGenerator功能
+- 优化了日志记录机制：
+  - 改进了日志文件的命名和创建逻辑
+  - 增强了日志写入效率（批量写入和定期刷新缓冲区）
+  - 完善了错误处理和异常捕获机制
+  - 添加了更详细的元数据和实验参数记录
+- 解决了潜在的资源泄漏问题，确保日志文件正确关闭
+- 测试验证了重构后系统的正确性和稳定性
 
-### 3.2 支持的轨迹类型及参数
+### 2024-05-26
+- 解决了机械臂在接触软块后的"上下弹跳"问题:
+  - 优化接触检测逻辑：为TRAJECTORY阶段和其他阶段设置不同的接触阈值（35mm/20mm）
+  - 改进深度控制算法：添加深度滤波、排除极值的均值滤波、自适应增益和限位
+  - 增强状态转换逻辑：使用深度方差<0.000008且持续1秒的条件判断稳定性
+  - 调整轨迹生成策略：使用实际稳定深度（约23mm）替代目标深度（1mm）
+  - 限制高度修正幅度：限制单次调整不超过0.3mm，减小校正率到30%
+- 提高了轨迹执行过程中的稳定性:
+  - 机械臂能够保持稳定接触并平稳执行XY平面轨迹
+  - 接触力维持稳定，没有因深度变化导致的力波动
+  - 在不同控制阶段间平滑过渡，没有状态抖动
+- 记录了深度控制关键经验:
+  - 软接触场景中深度滤波的重要性
+  - 不同控制阶段需要不同的参数设置
+  - 基于方差的稳定性判断优于基于目标值的判断
 
-#### 轨迹类型
-| 轨迹类型 | 参数名称 | 说明 |
-|---------|---------|------|
-| circular | trajectory_type:=circular | 圆形轨迹（默认） |
-| rectangular | trajectory_type:=rectangular | 矩形轨迹 |
-| figure_eight | trajectory_type:=figure_eight | 八字形轨迹 |
-| linear | trajectory_type:=linear | 直线往返轨迹 |
-| custom | trajectory_type:=custom | 自定义轨迹 |
 
-#### 轨迹参数设置
-| 参数名称 | 默认值 | 说明 |
-|---------|-------|------|
-| circle_radius | 0.1 | 圆形轨迹半径（米） |
-| rect_width | 0.1 | 矩形宽度（米） |
-| rect_height | 0.1 | 矩形高度（米） |
-| eight_width | 0.15 | 八字形宽度（米） |
-| eight_height | 0.1 | 八字形高度（米） |
-| line_length | 0.2 | 直线长度（米） |
-| custom_trajectory_file | custom_trajectory_example.csv | 自定义轨迹文件路径 |
-| speed_factor | 1.0 | 轨迹运动速度系数 |
-
-#### 力控制参数
-| 参数名称 | 默认值 | 说明 |
-|---------|-------|------|
-| target_force | 10.0 | 目标接触力（牛顿） |
-| force_p_gain | 0.05 | 力控P增益 |
-| force_i_gain | 0.0 | 力控I增益 |
-| force_d_gain | 0.01 | 力控D增益 |
-
-#### 软接触参数
-| 参数名称 | 默认值 | 说明 |
-|---------|-------|------|
-| youngs_modulus | 1000.0 | 杨氏模量（帕斯卡） |
-| poisson_ratio | 0.45 | 泊松比 |
-| contact_stiffness | 800.0 | 接触刚度（N/m） |
-| contact_damping | 10.0 | 接触阻尼（Ns/m） |
-
-### 3.3 使用示例
-
-#### 基本圆形轨迹（默认）
-```bash
-roslaunch franka_gazebo fr3_with_soft_contact.launch
-```
-
-#### 矩形轨迹示例
-```bash
-roslaunch franka_gazebo fr3_with_soft_contact.launch trajectory_type:=rectangular rect_width:=0.15 rect_height:=0.1
-```
-
-#### 八字形轨迹示例
-```bash
-roslaunch franka_gazebo fr3_with_soft_contact.launch trajectory_type:=figure_eight eight_width:=0.2 eight_height:=0.1 speed_factor:=0.8
-```
-
-#### 自定义轨迹示例
-```bash
-roslaunch franka_gazebo fr3_with_soft_contact.launch trajectory_type:=custom custom_trajectory_file:=my_custom_path.csv
-```
-
-#### 调整力大小和材料属性
-```bash
-roslaunch franka_gazebo fr3_with_soft_contact.launch target_force:=8.0 youngs_modulus:=2000.0 poisson_ratio:=0.4
-```
-
-### 3.4 日志数据与分析
-
-运行仿真后，力数据将被自动记录到CSV文件中：
-```
-franka_ros/franka_gazebo/logs/force_data_YYYYMMDD_HHMMSS.csv
-```
-
-CSV文件格式：
-```
-# 实验开始时间: [时间] 秒
-# 本地时间: YYYYMMDD_HHMMSS
-# 控制阶段说明: 0=APPROACH, 1=CONTACT, 2=TRAJECTORY
-# 软块物理属性: 杨氏模量=[值]Pa, 泊松比=[值]
-# 目标力: [值]N
-# ---------------------------------------
-time,phase,pos_x,pos_y,pos_z,force_x,force_y,force_z,force_magnitude,depth,target_force
-...数据内容...
-```
-
-### 3.5 常见问题与解决方法
-
-1. **力控不稳定**：调整力控PID参数，特别是增大阻尼系数
-2. **轨迹跟踪不准确**：检查速度因子是否过大，必要时降低速度
-3. **接触不稳定**：尝试调整软接触参数，增大杨氏模量或降低目标力
-4. **启动失败**：检查ROS环境和依赖包是否正确安装
-
-## 4. 实现阶段
+  ## 实现阶段
 
 ### 阶段1：已完成部分
 
@@ -248,176 +193,98 @@ time,phase,pos_x,pos_y,pos_z,force_x,force_y,force_z,force_magnitude,depth,targe
 - [ ] 改进鲁棒性（应对外部干扰）
 - [ ] 参数自动调整
 
-## 5. 技术关键点
 
-### 5.1 轨迹生成改进
-```cpp
-// 当前圆周轨迹生成
-Eigen::Vector3d circular_position = circle_center_ + 
-             circle_radius_ * cos(angle) * circle_x_axis_ + 
-             circle_radius_ * sin(angle) * circle_y_axis_;
 
-// 需要改进为通用轨迹生成接口
-Eigen::Vector3d desired_position = trajectory_generator_->getPosition(elapsed_time_);
-```
+算法逻辑和要求：
+    第一阶段：调零；在gazebo仿真启动后机械臂保持初始状态，获取法兰各个方向的力值进行调零，思路是窗口式获取均值计算offset值，并且将后来的力值都减去这个offset值使得力值趋向零；调零完成标志是力值稳定极小（1s内所有均值小于0.5n）当调零完成后，后续的z方向力都是使用调零后的力进行计算和判断；
 
-### 5.2 动态力控制
-```cpp
-// 当前恒力控制
-double force_error = target_force_ - current_contact_state.contact_force;
+    过程中调完零之后，不进行其他的检测和算法，不需要检测外部干扰和失败情况，不做任何的返回状态动作；
 
-// 改进为动态力控制
-double target_force_current = force_trajectory_->getForce(elapsed_time_);
-double force_error = target_force_current - current_contact_state.contact_force;
-```
+    调零完成后进二阶段：接近；关闭调零算法，使用调零后的z方向力进行后续计算；机械臂向下慢速运动，在启动0.5s之后（避免启动时振动导致误判）开始检测z方向外力；直到z方向外力大于0.5n；判断为接触到软块（检测手段不再使用现在的窗口检测一致而是检测z方向外力，大于0.5n就记为接触）此时切换到三阶段；
 
-## 6. 工作计划时间表（修订版）
+    第三阶段：接触；接触时记录接触的坐标记录为深度零点，此时探头末端和软块表面重合，检测接触做短暂停留后到即切换到下一阶段，且在整个逻辑中，机械臂是无法获取到软快的上面高度的；深度的零点是初次接触软块检测到接触的高度
 
-### 短期目标（已完成）
-- ✅ 实现通用轨迹生成器
-- ✅ 实现动态力控制
-- ✅ 集成测试与调优
+    第四阶段：下探；这个阶段通过发布目标位置，控制机械臂慢速持续下压，通过反馈控制算法控制深度直到达到期望深度（从@simulation_parameters_config.yaml 中获取）并且深度稳定3s后切换到下一阶段； 
 
-### 中期目标（6-8周）
-1. 软接触模型类开发（1周）
-   - 设计并实现独立的软接触模型类（3天）
-   - 与现有控制器集成测试（2天）
-2. 基础MPC框架实现（2周）
-   - 设计控制器结构（3天）
-   - 实现状态预测与优化函数（4天）
-   - 与现有控制器集成（3天）
-   - 初步测试（4天）
-3. ADMM优化器开发（3-4周）
-   - 实现基础ADMM框架（1周）
-   - 开发三个子问题求解逻辑（1-2周）
-   - 优化与性能调优（1周）
-4. 集成测试与文档（1周）
-   - 综合测试（3天）
-   - 文档与教程完善（2天）
+    在3阶段之后深度控制反馈算法持续运行，保证稳定深度
 
-### 长期目标（3个月以上）
-1. 多点接触扩展
-2. 复杂任务支持（如轮廓跟踪、形变控制）
-3. 实际硬件测试与部署
+    第五阶段：轨迹运动；达到期望深度后，按照轨迹生成器开始运动，保持运动平面和期望深度一致
 
-## 7. 实施建议
+主要文件功能和说明：
+@franka_gazebo是存放仿真有关文件的，提供Gazebo仿真环境、启动文件、物理模型和仿真配置
+    启动器：franka_gazebo/launch/fr3_with_independent_probe.launch
+    仿真世界文件：empty_with_soft_block.world
 
-### 代码结构
-```
-franka_example_controllers/
-├── include/franka_example_controllers/
-│   ├── models/
-│   │   └── soft_contact_model.h       # 软接触模型类
-│   ├── optimization/
-│   │   ├── admm_optimizer.h           # ADMM优化器
-│   │   ├── dynamics_subproblem.h      # 动力学子问题
-│   │   ├── ik_subproblem.h            # 逆运动学子问题
-│   │   └── constraint_subproblem.h    # 约束子问题
-│   ├── mpc_controller.h               # MPC控制器主类
-│   └── [现有文件...]
-├── src/
-│   ├── models/
-│   │   └── soft_contact_model.cpp     # 软接触模型实现
-│   ├── optimization/
-│   │   ├── admm_optimizer.cpp         # ADMM优化器实现
-│   │   ├── dynamics_subproblem.cpp    # 动力学子问题实现
-│   │   ├── ik_subproblem.cpp          # 逆运动学子问题实现
-│   │   └── constraint_subproblem.cpp  # 约束子问题实现
-│   ├── mpc_controller.cpp             # MPC控制器实现
-│   └── [现有文件...]
-```
+@franka_description 定义机器人的URDF/XACRO描述文件，包含几何形状、物理特性、关节连接等
+    机械臂末端探头定义和修改：franka_description/robots/common/franka_robot.xacro
+    外观的stl文件： probe_model/meshes/probe.stl 
 
-### 优先级建议
-1. 首先完成软接触模型类，使其与现有控制器兼容
-2. 实现简化版MPC框架，不包含ADMM优化（使用简单求解器）
-3. 在MPC框架稳定后添加ADMM优化器
-4. 最后再进行性能优化和扩展功能
+@franka_example_controllers
+   A[ROS应用层] --> B[franka_example_controllers]
+    B --> C[franka_hw硬件抽象层]
+    C --> D[Gazebo仿真/实体机器人]
 
-## 8. 注意事项
+circle_controller.cpp 
+    作用：探头接触控制的主控制器，控制和机械臂完成任务中的所有运动控制和计算，完成上面提到的整个运动策略和过程，在fr3_with_independent_probe.launch中的作用：作为主要控制算法执行探头与软块的接触实验
+    输入：
+    1. franka::RobotState robot_state = state_handle_->getRobotState();
+    位置信息：robot_state.O_T_EE (末端执行器位姿)
+    关节角度：robot_state.q
+    关节速度：robot_state.dq
+    外部力/力矩：robot_state.O_F_ext_hat_K/
+    2. 关节力矩命令 (发送到 franka_hw)：   joint_handles_[i].setCommand(tau_d_final(i));
+    3. 机器人模型信息 (来自 franka_hw)
+soft_contact_model.cpp 
+    作用：只作为计算器，不作为控制器；通过获取深度和仿真器设置的弹性信息，用docs/Real-Time Deformable-Contact-Aware Model Predictive Control for Force-Modulated Manipulation论文中的模型和算法，实现软接触物理模型实现（Hertz-Hunt-Crossley模型）计算接触力和摩擦力等；
+    输入是
+    1. 配置文件和仿真文件中的接触系物理参数，比如模量等等
+    2. 来自circle_controller.cpp 计算出来的深度信息和运动信息（比如后续需要计算摩擦力相关内容）
+    输出：
+    3. 计算得到的接触力数值estimated_force
 
-- 保持实时性要求（1kHz控制频率）
-- 确保轨迹平滑过渡，避免突变
-- 力控制与轨迹跟踪需要平衡权重
+trajectory_generator.cpp
+    作用：轨迹生成算法，文件中定义了几个常用的规则轨迹，圆形、矩形、八字形、直线等轨迹，在探头深度稳定后轨迹运动阶段被调用，获取机械臂当前的位置和稳定平面后，生成运动的轨迹控制机械臂进行运动；
+    输入：
+    1. 来自circle_controller.cpp 的：
+        a. 机械臂稳定的深度位置，作为运动的平面
+        b. 机械臂初始状态下的z轴位置，作为规则运动的中心
+    2. 来自配置文件的轨迹尺寸参数@simulation_parameters_config.yaml，比如半径等等
+    输出：
+    期望位置轨迹点 (Eigen::Vector3d)
+    ROS可视化消息 (nav_msgs::Path)
 
-## 9. 后续扩展方向
 
-- 增加复杂路径绘制功能
-- 实现多点接触控制
-- 添加触觉反馈和材料识别
-- 开发图形用户界面，便于轨迹设计和参数调整 
+log_generator.cpp
+    作用：从控制器中获取信息，生成日志，数据记录和日志管理，记录力、位置、深度等实验数据
+ 
 
-## 10. 更新日志
+force_generator.cpp
+    作用：力轨迹生成，生成恒定力、正弦力、阶跃力等力控制轨迹，在力控制模式下使用（默认都是深度控制）
+示范文件：
+cartesian_impedance_example_controller.cpp - 笛卡尔阻抗控制
+force_example_controller.cpp - 基础力控制示例
 
-### 2024-05-XX
-- 实现了自定义轨迹生成器接口
-- 添加了多种轨迹类型支持（直线、矩形、八字形、自定义）
-- 添加了从文件读取自定义路径功能
-- 优化了轨迹可视化，实现历史轨迹点(100个)和未来预测点(200个)显示
-- 添加了50ms轨迹预测减少跟踪延迟
-- 改进了力控制参数，提高了响应速度
-- 将探头颜色从红色改为白色，提高可视性
-- 实现了恒定/正弦/阶跃/三维扰动力变化，参数可通过launch灵活配置
-- 支持力噪音扰动与力变化类型独立叠加，便于鲁棒性实验
-- launch和README文档完善，支持任意轨迹+任意力变化+扰动组合实验
-- 已知问题：高幅值扰动下实际力跟踪有物理极限，建议合理设置参数
-- 所有代码已上传至GitHub仓库
+/include 目录 - 接口定义
 
-### 2024-05-15
-- 实现了软接触力估计器节点，用于理论模型力与Gazebo仿真力对比
-- 优化了力估计的计算与日志记录系统，支持多种数据分析
-- 解决了实现中遇到的几个关键问题：
-  - 修复了机器人位置信息获取问题：从FrankaState消息中提取变换矩阵中的位置数据
-  - 调整力检测阈值：将力变化检测阈值和绝对力阈值分别调整为5N和8N
-  - 优化接触检测逻辑：首次接触需同时满足力变化和力绝对值条件，后续状态维持仅依赖力绝对值
-  - 移除基于深度的接触检测，只使用力变化和绝对力值判断
-  - 增加调试信息输出，记录关键状态变化
-- 问题汇总与后续优化方向：
-  - 深度计算需进一步优化：考虑使用滤波和更精确的参考点
-  - 力变化检测逻辑需调整：当前窗口大小和变化阈值可能需要根据不同材料特性进行适配
-  - 运动安排逻辑需优化：考虑添加自适应运动控制，根据接触状态动态调整
-  - 日志系统增强：添加更多调试信息，便于问题分析和算法改进
+ /config 目录 - 参数配置
+simulation_parameters_config.yaml
+    作用：探头仿真的完整参数配置
+    包含：
+    轨迹参数（圆周半径、频率等）
+    接触模型参数（杨氏模量、泊松比等）
+    控制参数（深度控制、力控制）
+    探头和软块位置配置
+    在仿真中：为fr3_with_independent_probe.launch提供所有控制参数
 
-### 2024-05-20
-- 重构了力轨迹生成相关代码，提高模块化：
-  - 创建了独立的ForceGenerator类，从CircleController中提取力轨迹生成逻辑
-  - 实现了ForceGenerator的头文件和源文件
-  - 添加了初始化方法，支持从ROS参数服务器读取配置
-  - 分离了力轨迹生成和力噪声生成功能
-  - 在CircleController中集成ForceGenerator类
-- 解决了编译问题：
-  - 在CircleController中保留force_noise_enable_成员变量
-  - 修复了CMakeLists.txt中的依赖关系
-- 优化了代码结构和注释
-- 确保修改前后功能一致性，验证了力轨迹生成在不同场景下的正确行为
-- 分析了日志文件，确认力控制数据记录正常
+/msg 目录 - 消息定义
+JointTorqueComparison.msg
+作用：定义关节力矩比较的消息格式
+用途：用于调试和数据分析
 
-### 2024-05-25
-- 重构了日志记录系统，提升了代码模块化和可维护性：
-  - 创建了独立的LogGenerator类，实现了日志功能的封装
-  - 将原先在CircleController中的日志功能提取到单独的文件中
-  - 新增了log_generator.h和log_generator.cpp文件
-  - 在CMakeLists.txt中添加了log_generator.cpp的编译配置
-  - 修改了CircleController类，整合LogGenerator功能
-- 优化了日志记录机制：
-  - 改进了日志文件的命名和创建逻辑
-  - 增强了日志写入效率（批量写入和定期刷新缓冲区）
-  - 完善了错误处理和异常捕获机制
-  - 添加了更详细的元数据和实验参数记录
-- 解决了潜在的资源泄漏问题，确保日志文件正确关闭
-- 测试验证了重构后系统的正确性和稳定性
 
-### 2024-05-26
-- 解决了机械臂在接触软块后的"上下弹跳"问题:
-  - 优化接触检测逻辑：为TRAJECTORY阶段和其他阶段设置不同的接触阈值（35mm/20mm）
-  - 改进深度控制算法：添加深度滤波、排除极值的均值滤波、自适应增益和限位
-  - 增强状态转换逻辑：使用深度方差<0.000008且持续1秒的条件判断稳定性
-  - 调整轨迹生成策略：使用实际稳定深度（约23mm）替代目标深度（1mm）
-  - 限制高度修正幅度：限制单次调整不超过0.3mm，减小校正率到30%
-- 提高了轨迹执行过程中的稳定性:
-  - 机械臂能够保持稳定接触并平稳执行XY平面轨迹
-  - 接触力维持稳定，没有因深度变化导致的力波动
-  - 在不同控制阶段间平滑过渡，没有状态抖动
-- 记录了深度控制关键经验:
-  - 软接触场景中深度滤波的重要性
-  - 不同控制阶段需要不同的参数设置
-  - 基于方差的稳定性判断优于基于目标值的判断
+franka_example_controllers_plugin.xml 
+作用：ROS控制器插件注册文件
+功能：向ROS系统注册所有可用控制器
+重要性：让circle_controller能被ROS控制器管理器识别和加载
+CMakeLists.txt & package.xml
+作用：包构建配置和依赖管理

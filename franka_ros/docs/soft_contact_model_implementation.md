@@ -36,7 +36,7 @@
 
 我们创建了以下配置和启动文件：
 
-- `franka_example_controllers/config/circle_controller_with_contact.yaml`
+- `franka_example_controllers/config/simulation_parameters_config.yaml`
 - `franka_gazebo/launch/fr3_with_soft_contact.launch`
 - `franka_gazebo/launch/rviz/fr3_contact_visualization.rviz`
 

@@ -1,3 +1,22 @@
+/**
+ * @file soft_contact_model.cpp
+ * @brief 软接触模型实现，用于模拟机器人末端与软表面接触时的力学行为
+ *
+ * @架构：
+ * - SoftContactModel类：实现基于赫兹接触理论的软接触模型
+ * - ContactVisualizer类：提供接触信息的可视化功能
+ *
+ * @数据流：
+ * 输入：机器人末端位置、速度、方向 -> 
+ * 处理：计算接触状态、接触深度、法向力、摩擦力 -> 
+ * 输出：接触力和可视化标记（ROS消息）
+ *
+ * @概述：
+ * 1. 使用赫兹接触理论计算接触力，考虑材料弹性模量和泊松比
+ * 2. 实现库仑摩擦模型计算摩擦力
+ * 3. 提供接触力和接触点可视化功能
+ * 4. 支持接触状态检测和深度计算
+ */
 #include <franka_example_controllers/soft_contact_model.h>
 
 #include <cmath>
@@ -15,8 +34,13 @@ SoftContactModel::SoftContactModel(ros::NodeHandle& node_handle, const ContactPa
   wrench_pub_ = node_handle_.advertise<geometry_msgs::WrenchStamped>(
       "contact_force", 1);
       
+  // 添加理论力发布者，用于rqt绘图
+  theoretical_force_pub_ = node_handle_.advertise<geometry_msgs::WrenchStamped>(
+      "theoretical_force", 1);
+      
   // 初始化消息
   wrench_msg_.header.frame_id = "world";
+  theoretical_force_msg_.header.frame_id = "world";
   
   // 初始化可视化标记
   markers_.markers.resize(3);
@@ -68,11 +92,11 @@ SoftContactModel::SoftContactModel(ros::NodeHandle& node_handle, const ContactPa
     marker.lifetime = ros::Duration(1.0);
   }
   
-  ROS_INFO("SoftContactModel initialized with parameters:");
+  ROS_INFO("SoftContactModel initialized with parameters (based on paper):");
   ROS_INFO("  Young's modulus: %.2f Pa", params_.young_modulus);
   ROS_INFO("  Poisson ratio: %.2f", params_.poisson_ratio);
   ROS_INFO("  Friction coefficient: %.2f", params_.friction_coef);
-  ROS_INFO("  Contact radius: %.3f m", params_.contact_radius);
+  ROS_INFO("  Contact radius (probe): %.3f m", params_.contact_radius);
   ROS_INFO("  Path radius: %.3f m", params_.path_radius);
   ROS_INFO("  Damping: %.2f Ns/m", params_.damping);
   ROS_INFO("  Force threshold: %.2f N", params_.force_threshold);
@@ -165,56 +189,58 @@ Eigen::Vector3d SoftContactModel::computeContactForce(double depth, const Eigen:
     return Eigen::Vector3d::Zero();
   }
   
-  // 根据论文公式：F = (4/3) * E_effective * sqrt(R) * depth^(3/2)
-  // E_effective = E / (1-v^2)，其中E是杨氏模量，v是泊松比
-  double effective_modulus = params_.young_modulus / (1 - std::pow(params_.poisson_ratio, 2));
+  // 根据论文公式计算接触力：F = (4/3) * E* * sqrt(R) * depth^(3/2)
+  // 其中 E* = E / (1 - ν²) 是有效弹性模量
   
-  // 计算接触面积半径
-  // a = sqrt(R*d)，其中R是接触半径，d是接触深度
-  double contact_radius = std::sqrt(params_.contact_radius * depth);
+  // 计算有效弹性模量 (论文公式)
+  double effective_modulus = params_.young_modulus / (1.0 - params_.poisson_ratio * params_.poisson_ratio);
   
-  // 计算弹性力
+  // 探头半径 R (论文中的接触半径)
+  double probe_radius = params_.contact_radius;  // 应该是0.005m (5mm半径)
+  
+  // 计算弹性力 (Hertz接触理论)
   double elastic_force = (4.0 / 3.0) * effective_modulus * 
-                        std::sqrt(params_.contact_radius) * 
+                        std::sqrt(probe_radius) * 
                         std::pow(depth, 1.5);
   
-  // 添加阻尼项：Hunt-Crossley模型 (基于论文中的粘弹性模型)
-  // F_damping = k_d * depth^n * velocity
-  static Eigen::Vector3d last_normal = normal;
+  // Hunt-Crossley阻尼模型 (论文中的粘弹性模型)
+  // F_damping = damping_coefficient * depth^n * depth_rate
   static double last_depth = 0.0;
   static ros::Time last_time = ros::Time::now();
   
   ros::Time current_time = ros::Time::now();
   double dt = (current_time - last_time).toSec();
   
-  if (dt > 0) {
-    // 估计接触点速度
+  double damping_force = 0.0;
+  if (dt > 1e-6) {  // 避免除零错误
     double depth_rate = (depth - last_depth) / dt;
     
-    // 阻尼力 - 仅在挤压时应用(深度增加)
-    double damping_force = 0;
-    if (depth_rate > 0) {
-      // 按照Hunt-Crossley模型，阻尼与深度的1.5次方成比例
+    // Hunt-Crossley阻尼：damping与depth^1.5成比例
+    if (depth_rate > 0) {  // 仅在压缩时应用阻尼
       damping_force = params_.damping * std::pow(depth, 1.5) * depth_rate;
     }
+    }
     
-    // 总力 = 弹性力 + 阻尼力
-    double force_magnitude = elastic_force + damping_force;
+  // 总法向力 = 弹性力 + 阻尼力
+  double total_force = elastic_force + damping_force;
     
-    // 保存状态以计算下一次的速度
+  // 计算接触面积半径 (论文公式: a = sqrt(R*d))
+  double contact_area_radius = std::sqrt(probe_radius * depth);
+  
+  // 记录理论力用于对比
+  theoretical_force_ = total_force;
+  
+  // 发布理论力数据
+  publishTheoreticalForce(total_force * normal);
+  
+  // 更新状态
     last_depth = depth;
-    last_normal = normal;
     last_time = current_time;
     
-    // 力不应为负值（仅在挤压方向存在力）
-    force_magnitude = std::max(0.0, force_magnitude);
+  // 确保力不为负
+  total_force = std::max(0.0, total_force);
     
-    // 返回沿法线方向的力
-    return force_magnitude * normal;
-  } else {
-    // 如果时间差为0，则只返回弹性力
-    return elastic_force * normal;
-  }
+  return total_force * normal;
 }
 
 Eigen::Vector3d SoftContactModel::computeFrictionForce(
@@ -229,13 +255,33 @@ Eigen::Vector3d SoftContactModel::computeFrictionForce(
     return Eigen::Vector3d::Zero();
   }
   
-  // 计算库仑摩擦力
-  double friction_magnitude = params_.friction_coef * normal_force;
+  // 根据论文公式计算摩擦力：
+  // F_f = μ * F_z * [1 + (2ν - 1) * 3a²/(10R²)] * n_e + k_d * v_e
+  // 其中 a = sqrt(R*d) 是接触面积半径
+  
+  double probe_radius = params_.contact_radius;
+  double poisson_ratio = params_.poisson_ratio;
+  
+  // 计算接触面积半径 (需要当前深度信息)
+  // 这里简化处理，使用一个估计值
+  double estimated_depth = 0.001;  // 估计接触深度为1mm
+  double contact_area_radius = std::sqrt(probe_radius * estimated_depth);
+  
+  // 计算修正的摩擦系数 (论文公式)
+  double modified_friction_coef = params_.friction_coef * 
+    (1.0 + (2.0 * poisson_ratio - 1.0) * 3.0 * contact_area_radius * contact_area_radius / 
+     (10.0 * probe_radius * probe_radius));
+  
+  // 库仑摩擦力
+  double friction_magnitude = modified_friction_coef * normal_force;
   
   // 摩擦力方向与速度相反
   Eigen::Vector3d friction_direction = -tangential_velocity / vel_magnitude;
   
-  return friction_magnitude * friction_direction;
+  // 添加速度阻尼项 (论文中的k_d * v_e项)
+  Eigen::Vector3d velocity_damping = -params_.damping * 0.1 * tangential_velocity;  // 较小的阻尼系数
+  
+  return friction_magnitude * friction_direction + velocity_damping;
 }
 
 void SoftContactModel::publishContactMarkers(const ContactState& state) {
@@ -316,6 +362,23 @@ void SoftContactModel::publishContactForce(
   wrench_pub_.publish(wrench_msg_);
 }
 
+void SoftContactModel::publishTheoreticalForce(const Eigen::Vector3d& theoretical_force) {
+  theoretical_force_msg_.header.stamp = ros::Time::now();
+  
+  // 填充理论力数据
+  theoretical_force_msg_.wrench.force.x = theoretical_force.x();
+  theoretical_force_msg_.wrench.force.y = theoretical_force.y();
+  theoretical_force_msg_.wrench.force.z = theoretical_force.z();
+  
+  // 力矩设为零
+  theoretical_force_msg_.wrench.torque.x = 0.0;
+  theoretical_force_msg_.wrench.torque.y = 0.0;
+  theoretical_force_msg_.wrench.torque.z = 0.0;
+  
+  // 发布理论力消息
+  theoretical_force_pub_.publish(theoretical_force_msg_);
+}
+
 double SoftContactModel::computeEffectiveModulus() const {
   // 有效弹性模量计算
   // E* = E / (1 - ν²)
@@ -331,6 +394,30 @@ double SoftContactModel::computeContactStiffness(double depth) const {
   // K = dF/dδ = 2 * E* * sqrt(R) * sqrt(δ)
   double effective_modulus = computeEffectiveModulus();
   return 2.0 * effective_modulus * std::sqrt(params_.contact_radius) * std::sqrt(depth);
+}
+
+/**
+ * @brief 根据接触深度计算理论正压力
+ * 
+ * @param depth 接触深度 (m)
+ * @return 计算得到的理论正压力 (N)
+ */
+double SoftContactModel::computeNormalForce(double depth) {
+  if (depth <= 0) {
+    return 0.0;
+  }
+  
+  // 根据论文公式：F = (4/3) * E_effective * sqrt(R) * depth^(3/2)
+  // E_effective = E / (1-v^2)，其中E是杨氏模量，v是泊松比
+  double effective_modulus = params_.young_modulus / (1 - std::pow(params_.poisson_ratio, 2));
+  
+  // 计算弹性力
+  double elastic_force = (4.0 / 3.0) * effective_modulus * 
+                        std::sqrt(params_.contact_radius) * 
+                        std::pow(depth, 1.5);
+  
+  // 力不应为负值（仅在挤压方向存在力）
+  return std::max(0.0, elastic_force);
 }
 
 // 实现ContactVisualizer类的方法

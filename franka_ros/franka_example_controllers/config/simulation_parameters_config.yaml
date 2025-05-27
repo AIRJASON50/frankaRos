@@ -40,26 +40,29 @@ circle_controller:
 
   # 软接触模型参数 - 基于Hertz-Hunt-Crossley模型
   contact_model:
-    young_modulus: 1000.0            # 杨氏模量 [Pa] - EcoFlex材料特性
+    young_modulus: 100.0            # 杨氏模量 [Pa] - 与model.sdf一致
     poisson_ratio: 0.45              # 泊松比 - 近似不可压缩
-    friction_coef: 0.3               # 摩擦系数 - Coulomb摩擦模型
-    contact_radius: 0.01             # 接触工具半径 [m] - 圆形探针
+    friction_coef: 0.0               # 摩擦系数 - 与model.sdf一致
+    contact_radius: 0.002             # 接触工具半径 [m] - 圆形探针
     path_radius: 0.1                 # 路径半径 [m] - 圆周运动半径
-    damping: 50.0                    # Hunt-Crossley阻尼系数 [Ns/m]
-    force_threshold: 0.5             # 接触力阈值 [N] - 降低以提高灵敏度
-    depth_threshold: 0.0005          # 接触深度阈值 [m] - 降低以捕获微小接触
+    damping: 100.0                    # Hunt-Crossley阻尼系数 [Ns/m] - 与model.sdf一致
+    force_threshold: 0.5             # 接触力阈值 [N] - 按算法要求设置
+    depth_threshold: 0.0001          # 接触深度阈值 [m] - 0.1mm检测精度
 
   # 控制模式配置
   control_mode: 0  # 控制模式: 0=深度控制, 1=力控制
   
   # 深度控制参数
   depth_controller:
-    target_depth: 0.001  # 目标深度 [m]
-    p_gain: 1.5         # 比例增益
-    i_gain: 0.2         # 积分增益 - 增加以提高稳定性
-    max_adjustment: 0.005  # 最大调整量 [m]
+    target_depth: 0.001  # 目标深度 [m] - 增加到3mm，确保足够的深度进行控制
+    p_gain: 50.0         # 比例增益 - 增大以提高响应速度
+    i_gain: 10.0          # 积分增益 - 增大以消除稳态误差
+    d_gain: 5.0          # 微分增益 - 增大以抑制振荡
+    max_adjustment: 0.001  # 单次最大调整量 [m] - 增加调整量
+    stability_threshold: 0.0005  # 深度稳定阈值 [m] - 放宽到0.5mm
+    stability_duration: 2.0      # 深度稳定持续时间 [s] - 减少到2秒
 
-  # 力控制参数
+  # 力控制参数 - 仅在control_mode=1时使用
   force_controller:
     target_force: 10.0  # 目标力 [N]
     p_gain: 0.2         # 比例增益
@@ -83,13 +86,12 @@ circle_controller:
   probe:
     length: 0.114                    # 探头长度 [m] - 从末端法兰到探头尖端的距离
 
-  # 软块配置 (基于世界文件中的实际位置)
+  # 软块配置 (仅用于仿真环境信息，机械臂无法获取软块实际高度)
   soft_block:
-    position_x: 0.4                  # 软块X位置 [m]
-    position_y: 0.0                  # 软块Y位置 [m]
-    position_z: 0.425                # 软块Z位置 [m] - 从世界文件获取
-    surface_z: 0.4025                # 软块表面Z坐标 [m] - 从世界文件计算 (中心0.4 + 半厚0.0025)
-    height: 0.005                     # 软块高度 [m] - 修正为5mm厚度，与model.sdf一致
+    position_x: 0.4                  # 软块X位置 [m] - 仅用于仿真环境设置
+    position_y: 0.0                  # 软块Y位置 [m] - 仅用于仿真环境设置  
+    position_z: 0.405                # 软块Z位置中心 [m] - 仅用于仿真环境设置
+    height: 0.01                     # 软块高度 [m] - 仅用于仿真环境设置
 
   # 力检测参数
   force_detection:
@@ -112,3 +114,24 @@ circle_controller:
   frequency: 0.5              # 控制频率 [Hz]
   radius: 0.1                 # 半径 [m]
   height: 0.5                 # 高度 [m] 
+
+  # 接触模型参数
+  soft_contact_model:
+    young_modulus: 1000.0    # 杨氏模量 [Pa] - 与model.sdf一致
+    poisson_ratio: 0.45      # 泊松比 - 与model.sdf一致
+    contact_radius: 0.01     # 探头半径 [m]
+    depth_threshold: 0.0002  # 接触判定阈值 [m]
+    friction_coef: 0.3       # 摩擦系数 - 与model.sdf一致
+    damping: 100.0           # 阻尼系数 - 与model.sdf一致 
+
+  # 调零和接触检测参数
+  calibration:
+    mean_force_threshold: 0.5        # 调零完成阈值 [N] - 按算法要求1s内均值小于0.5N
+    variance_threshold: 0.5          # 力方差阈值 [N^2]
+    stability_duration: 1.0          # 调零稳定时间要求 [s]
+    required_samples: 500            # 调零所需采样数
+    
+  # 接触检测参数
+  contact_detection:
+    force_threshold: 0.5             # 接触检测阈值 [N] - 按算法要求z方向力大于0.5N
+    confirmation_duration: 0.2       # 接触确认持续时间 [s] - 短暂停留 

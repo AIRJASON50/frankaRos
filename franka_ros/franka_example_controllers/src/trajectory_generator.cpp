@@ -37,8 +37,8 @@ TrajectoryGenerator::TrajectoryGenerator()
       circle_plane_("yz"),
       speed_factor_(1.0),
       circle_center_(Eigen::Vector3d::Zero()),
-      circle_x_axis_(Eigen::Vector3d::UnitX()),
-      circle_y_axis_(Eigen::Vector3d::UnitY()),
+      circle_x_axis_(Eigen::Vector3d(1, 0, 0)),
+      circle_y_axis_(Eigen::Vector3d(0, 1, 0)),
       rect_length_(0.2),
       rect_width_(0.1),
       eight_radius_x_(0.1),
@@ -46,9 +46,12 @@ TrajectoryGenerator::TrajectoryGenerator()
       line_length_(0.2),
       custom_trajectory_file_(""),
       contact_required_(true),             // 新增：默认需要保持接触
-      soft_block_surface_z_(0.0),         // 新增：软块表面高度
-      target_depth_(0.001),               // 新增：目标接触深度
+      soft_block_surface_z_(0.4),         // 新增：软块表面高度
+      target_depth_(0.002),               // 新增：目标接触深度
       preserve_height_(false) {            // 新增：是否保持当前高度
+    
+    // 轨迹生成器初始化
+    ROS_INFO("TrajectoryGenerator: Created with default parameters");
 }
 
 bool TrajectoryGenerator::init(ros::NodeHandle& node_handle, ros::Publisher& path_publisher) {
@@ -139,76 +142,29 @@ Eigen::Vector3d TrajectoryGenerator::generateTrajectory(double time, bool in_con
   // 应用速度因子来调整轨迹速度
   double adjusted_time = time * speed_factor_;
   
-  // 增加预测时间以减少跟踪延迟
-  double prediction_time = 0.05;
-  double predicted_time = adjusted_time + prediction_time;
-  
-  // 根据轨迹类型生成目标位置
+  // 根据轨迹类型生成XY平面位置
   Eigen::Vector3d trajectory_position;
+  
   switch (trajectory_type_) {
     case CIRCULAR:
-      trajectory_position = generateCircularTrajectory(predicted_time);
+      trajectory_position = generateCircularTrajectory(adjusted_time);
       break;
     case RECTANGULAR:
-      trajectory_position = generateRectangularTrajectory(predicted_time);
+      trajectory_position = generateRectangularTrajectory(adjusted_time);
       break;
     case FIGURE_EIGHT:
-      trajectory_position = generateFigureEightTrajectory(predicted_time);
+      trajectory_position = generateFigureEightTrajectory(adjusted_time);
       break;
     case LINE:
-      trajectory_position = generateLineTrajectory(predicted_time);
+      trajectory_position = generateLineTrajectory(adjusted_time);
       break;
     case CUSTOM:
-      trajectory_position = generateCustomTrajectory(predicted_time);
+      trajectory_position = generateCustomTrajectory(adjusted_time);
       break;
-    default:
-      trajectory_position = generateCircularTrajectory(predicted_time);
   }
   
-  // 如果在接触状态且需要保持接触深度，调整z高度
-  if (in_contact && contact_required_) {
-    // 将z坐标设置为保持目标深度的高度
-    trajectory_position(2) = soft_block_surface_z_ - target_depth_;
-    
-    // 应用高度修正以确保稳定深度
-    double height_correction = 0.0;
-    
-    // 如果当前深度与目标深度有差异，进行小调整
-    if (fabs(current_depth - target_depth_) > 0.0002) {  // 0.2mm的差异阈值
-      // 减小校正率，使调整更平滑
-      height_correction = (current_depth - target_depth_) * 0.3;  // 30%的校正率(原为50%)
-      
-      // 限制单次高度修正量
-      double max_correction = 0.0002;  // 降低最大修正量到0.2mm，使控制更平稳
-      height_correction = std::max(std::min(height_correction, max_correction), -max_correction);
-    }
-    
-    // 应用高度修正
-    trajectory_position(2) -= height_correction;
-    
-    // 添加安全检查防止极端情况
-    if (trajectory_position(2) < soft_block_surface_z_ - 0.004) {
-      // 防止下压过深 - 最大深度4mm(软块厚度5mm)
-      trajectory_position(2) = soft_block_surface_z_ - 0.004;
-    } else if (trajectory_position(2) > soft_block_surface_z_ + 0.003) {
-      // 防止过高 - 最高不超过表面3mm
-      trajectory_position(2) = soft_block_surface_z_ + 0.003;
-    }
-    
-    // 记录轨迹生成的高度信息
-    static int debug_counter = 0;
-    if (debug_counter++ % 200 == 0) { // 每200次迭代输出一次
-      ROS_DEBUG_STREAM("轨迹高度: 软块表面=" << soft_block_surface_z_ 
-          << ", 当前深度=" << current_depth * 1000.0 << "mm"
-          << ", 目标深度=" << target_depth_ * 1000.0 << "mm"
-          << ", 轨迹位置z=" << trajectory_position(2)
-          << ", 修正量=" << height_correction * 1000.0 << "mm");
-    }
-  } else if (preserve_height_) {
-    // 保持当前高度，不修改z坐标
-    trajectory_position(2) = circle_center_(2);
-  }
-  
+  // 直接返回轨迹位置，不再进行任何高度修正
+  // 重要：深度控制完全由主控制器负责
   return trajectory_position;
 }
 
@@ -247,27 +203,35 @@ Eigen::Vector3d TrajectoryGenerator::generateRectangularTrajectory(double time) 
   if (normalized_time < 0.25) {
     // 第一条边：从左下到右下
     double t = normalized_time * 4.0;
-    return circle_center_ + 
+    Eigen::Vector3d trajectory_position = circle_center_ + 
            smooth_factor * ((t * rect_length_ - rect_length_/2) * circle_x_axis_ - 
            (rect_width_/2) * circle_y_axis_);
+    
+    return trajectory_position;
   } else if (normalized_time < 0.5) {
     // 第二条边：从右下到右上
     double t = (normalized_time - 0.25) * 4.0;
-    return circle_center_ + 
+    Eigen::Vector3d trajectory_position = circle_center_ + 
            smooth_factor * ((rect_length_/2) * circle_x_axis_ + 
            (t * rect_width_ - rect_width_/2) * circle_y_axis_);
+    
+    return trajectory_position;
   } else if (normalized_time < 0.75) {
     // 第三条边：从右上到左上
     double t = (normalized_time - 0.5) * 4.0;
-    return circle_center_ + 
+    Eigen::Vector3d trajectory_position = circle_center_ + 
            smooth_factor * ((1-t) * rect_length_ - rect_length_/2) * circle_x_axis_ + 
            smooth_factor * (rect_width_/2) * circle_y_axis_;
+    
+    return trajectory_position;
   } else {
     // 第四条边：从左上到左下
     double t = (normalized_time - 0.75) * 4.0;
-    return circle_center_ + 
+    Eigen::Vector3d trajectory_position = circle_center_ + 
            smooth_factor * (-rect_length_/2) * circle_x_axis_ + 
            smooth_factor * ((1-t) * rect_width_ - rect_width_/2) * circle_y_axis_;
+    
+    return trajectory_position;
   }
 }
 
@@ -284,9 +248,11 @@ Eigen::Vector3d TrajectoryGenerator::generateFigureEightTrajectory(double time) 
   // 生成8字形轨迹点 - 使用参数方程
   // x = a * sin(t)
   // y = b * sin(2*t)
-  return circle_center_ + 
+  Eigen::Vector3d trajectory_position = circle_center_ + 
          smooth_factor * eight_radius_x_ * sin(angle) * circle_x_axis_ + 
          smooth_factor * eight_radius_y_ * sin(2*angle) * circle_y_axis_;
+  
+  return trajectory_position;
 }
 
 Eigen::Vector3d TrajectoryGenerator::generateLineTrajectory(double time) {
@@ -300,8 +266,10 @@ Eigen::Vector3d TrajectoryGenerator::generateLineTrajectory(double time) {
   }
   
   // 生成直线往返轨迹点 - 使用正弦函数
-  return circle_center_ + 
+  Eigen::Vector3d trajectory_position = circle_center_ + 
          smooth_factor * (line_length_ * sin(angle) / 2) * circle_x_axis_;
+  
+  return trajectory_position;
 }
 
 Eigen::Vector3d TrajectoryGenerator::generateCustomTrajectory(double time) {
@@ -334,12 +302,16 @@ Eigen::Vector3d TrajectoryGenerator::generateCustomTrajectory(double time) {
           custom_trajectory_points_[i+1].position * alpha;
       
       // 应用平滑因子并返回结果
-      return circle_center_ + smooth_factor * (interpolated_position - circle_center_);
+      Eigen::Vector3d trajectory_position = circle_center_ + smooth_factor * (interpolated_position - circle_center_);
+      
+      return trajectory_position;
     }
   }
   
   // 默认返回第一个点
-  return circle_center_ + smooth_factor * (custom_trajectory_points_[0].position - circle_center_);
+  Eigen::Vector3d trajectory_position = circle_center_ + smooth_factor * (custom_trajectory_points_[0].position - circle_center_);
+  
+  return trajectory_position;
 }
 
 bool TrajectoryGenerator::loadCustomTrajectory(const std::string& filename) {
@@ -511,6 +483,11 @@ void TrajectoryGenerator::setSoftBlockParameters(double surface_z, double target
   target_depth_ = target_depth;
   ROS_INFO("TrajectoryGenerator: Soft block surface set to %.3f m, target depth: %.3f mm",
            soft_block_surface_z_, target_depth_ * 1000.0);
+}
+
+void TrajectoryGenerator::setTargetDepth(double depth) {
+  target_depth_ = depth;
+  ROS_INFO("TrajectoryGenerator: Target depth updated to %.3f mm", target_depth_ * 1000.0);
 }
 
 void TrajectoryGenerator::setPreserveHeight(bool preserve) {

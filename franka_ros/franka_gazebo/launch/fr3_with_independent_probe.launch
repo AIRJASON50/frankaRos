@@ -202,18 +202,4 @@
     <param name="force_noise_min" value="$(arg force_noise_min)"/>
     <param name="force_noise_max" value="$(arg force_noise_max)"/>
   </group>
-  
-  <!-- 启动力传感数据记录脚本 -->
-  <node name="force_data_recorder" pkg="franka_gazebo" type="record_force_data.py" output="screen">
-    <param name="arm_id" value="$(arg arm_id)" />
-    <param name="save_path" value="$(find franka_gazebo)/data/force_data" />
-  </node>
-  
-  <!-- 启动探头位置检测脚本 -->
-  <node name="contact_checker" pkg="franka_gazebo" type="check_contact.py" output="screen">
-    <param name="arm_id" value="$(arg arm_id)" />
-    <param name="soft_block_x" value="0.4" />
-    <param name="soft_block_y" value="0.0" />
-    <param name="soft_block_z" value="0.505" />
-  </node>
 </launch> 

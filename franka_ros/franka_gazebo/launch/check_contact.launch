@@ -16,13 +16,7 @@
   <env name="ROSCONSOLE_STDOUT_LINE_BUFFERED" value="1"/>
   <env name="ROSCONSOLE_CONFIG_FILE" value="$(find franka_gazebo)/config/contact_checker_logging.conf"/>
   
-  <!-- 启动接触检测节点 -->
-  <node name="contact_checker" pkg="franka_gazebo" type="check_contact.py" output="screen" respawn="true">
-    <!-- 日志记录间隔，单位秒 -->
-    <param name="log_interval" value="1.0"/>
-    <!-- 接触判定阈值，单位米 -->
-    <param name="contact_threshold" value="0.001"/>
-  </node>
+
   
   <!-- 可选: 启动RViz可视化 -->
   <!-- <node name="rviz" pkg="rviz" type="rviz" args="-d $(find franka_gazebo)/rviz/contact_checker.rviz" /> -->

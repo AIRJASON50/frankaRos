@@ -185,6 +185,7 @@ cat force_data_YYYYMMDD_HHMMSS.csv
 5. 实现模块化力轨迹生成器，支持恒定力、正弦变化力和阶跃力
 6. 添加力噪声功能，便于测试控制器稳健性
 7. 增加力估计对比工具，支持理论模型与实际测量力比较
+8. 实现独立的日志生成器模块，优化数据记录与分析功能
 
 ## 项目结构
 ```
@@ -194,11 +195,13 @@ franka_ros/
 │   │   ├── circle_controller.h             # 轨迹控制器
 │   │   ├── trajectory_generator.h          # 轨迹生成器
 │   │   ├── force_generator.h               # 力轨迹生成器
+│   │   ├── log_generator.h                 # 日志记录生成器
 │   │   └── soft_contact_model.h            # 软接触模型
 │   ├── src/
 │   │   ├── circle_controller.cpp           # 控制器实现
 │   │   ├── trajectory_generator.cpp        # 轨迹生成实现
 │   │   ├── force_generator.cpp             # 力轨迹生成实现
+│   │   ├── log_generator.cpp               # 日志记录实现
 │   │   └── soft_contact_model.cpp          # 接触模型实现
 ├── franka_gazebo/                          # 仿真环境包
 │   ├── logs/                               # 日志文件夹

@@ -149,6 +149,13 @@ public:
   void publishContactForce(const Eigen::Vector3d& force, const Eigen::Vector3d& contact_point);
   
   /**
+   * @brief 发布理论力消息，用于rqt绘图
+   * 
+   * @param theoretical_force 理论接触力向量
+   */
+  void publishTheoreticalForce(const Eigen::Vector3d& theoretical_force);
+  
+  /**
    * @brief 计算有效弹性模量
    * 
    * @return 有效弹性模量值
@@ -162,6 +169,23 @@ public:
    * @return 接触刚度值
    */
   double computeContactStiffness(double depth) const;
+  
+  /**
+   * @brief 根据接触深度计算理论正压力
+   * 
+   * @param depth 接触深度 (m)
+   * @return 计算得到的理论正压力 (N)
+   */
+  double computeNormalForce(double depth);
+  
+  /**
+   * @brief 获取接触半径
+   * 
+   * @return 接触半径值
+   */
+  double getContactRadius() const {
+    return params_.contact_radius;
+  }
   
   /**
    * @brief 向后兼容方法 - 检查是否接触
@@ -205,6 +229,7 @@ private:
   ros::NodeHandle& node_handle_;
   ros::Publisher marker_pub_;
   ros::Publisher wrench_pub_;
+  ros::Publisher theoretical_force_pub_;  // 理论力发布者
   
   // 软体块表面位置
   Eigen::Vector3d soft_block_position_;
@@ -214,6 +239,10 @@ private:
   
   // 接触状态消息
   geometry_msgs::WrenchStamped wrench_msg_;
+  geometry_msgs::WrenchStamped theoretical_force_msg_;  // 理论力消息
+  
+  // 理论力值（用于记录）
+  double theoretical_force_;
   
   // 上一帧接触状态
   ContactState last_state_;

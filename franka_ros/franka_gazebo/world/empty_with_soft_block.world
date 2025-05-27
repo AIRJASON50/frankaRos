@@ -48,16 +48,15 @@
       <uri>model://soft_block</uri>
       <!-- pose参数定义模型在世界中的位置和姿态: [x y z roll pitch yaw]
          当前值(0.4 0 0.405 0 0 0)将软块放在桌面上方
-         z值0.4025 = 桌面高度(0.4) + 软块厚度的一半(0.0025)
+         z值0.405 = 桌面高度(0.4) + 软块厚度的一半(0.005)
          这样软块底部刚好与桌面接触，不会漂浮也不会重叠
       -->
-      <pose>0.4 0 0.4025 0 0 0</pose>
-      <n>soft_block</n>
-      <static>1</static>
+      <pose>0.4 0 0.405 0 0 0</pose>
+      <name>soft_block</name>
     </include>
     
-    <!-- 定义桌子和软块之间的固定关节 -->
-    <joint name="table_soft_block_joint" type="fixed">
+    <!-- 定义桌子和软块之间的限制关节，允许垂直方向的微小位移但限制水平移动 -->
+    <joint name="table_soft_block_joint" type="prismatic">
       <parent>table::link</parent>
       <child>soft_block::link</child>
       <!-- 
@@ -66,22 +65,44 @@
         其他值为0表示在桌面中心位置
       -->
       <pose>0 0 0.2 0 0 0</pose>
+      <!-- 限制运动轴为垂直方向(z轴) -->
+      <axis>
+        <xyz>0 0 1</xyz>
+        <limit>
+          <!-- 允许向下压缩最多5mm，向上弹回最多2mm -->
+          <lower>-0.005</lower>
+          <upper>0.002</upper>
+          <!-- 关节阻尼，模拟硅胶的粘弹性 -->
+          <effort>10</effort>
+          <velocity>0.01</velocity>
+        </limit>
+        <dynamics>
+          <damping>10.0</damping>
+          <friction>0.1</friction>
+        </dynamics>
+      </axis>
     </joint>
     
-    <!-- 物理引擎设置: 提高接触仿真的准确性 -->
+    <!-- 物理引擎设置: 针对软体仿真优化 -->
     <physics type="ode">
-      <!-- 时间步长0.001秒，对于接触模拟足够精确 -->
-      <max_step_size>0.001</max_step_size>
+      <max_step_size>0.0005</max_step_size>    <!-- 减小时间步长，提高软体仿真精度 -->
       <real_time_factor>1</real_time_factor>
-      <real_time_update_rate>1000</real_time_update_rate>
+      <real_time_update_rate>2000</real_time_update_rate>  <!-- 增加更新频率以配合小时间步长 -->
+      
+      <!-- ODE特定参数: 针对软体接触优化 -->
       <ode>
         <solver>
-          <!-- 快速求解器: 提供良好的性能/精度平衡 -->
-          <type>quick</type>
-          <!-- 增加迭代次数，提高接触处理精度 -->
-          <iters>50</iters>
-          <sor>1.3</sor>
+          <type>quick</type>                   <!-- 使用迭代求解器，适合软体仿真 -->
+          <iters>100</iters>                   <!-- 增加迭代次数，提高软体接触收敛性 -->
+          <sor>1.3</sor>                       <!-- 超松弛参数，加速收敛 -->
         </solver>
+        
+        <constraints>
+          <cfm>0.01</cfm>                      <!-- 约束力混合参数：降低以提高软体刚度 -->
+          <erp>0.8</erp>                       <!-- 错误修正参数：提高以改善收敛 -->
+          <contact_max_correcting_vel>10</contact_max_correcting_vel>  <!-- 增大允许的修正速度 -->
+          <contact_surface_layer>0.002</contact_surface_layer>         <!-- 增加表面层厚度 -->
+        </constraints>
       </ode>
     </physics>
   </world>

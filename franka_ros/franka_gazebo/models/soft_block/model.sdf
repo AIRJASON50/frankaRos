@@ -17,10 +17,10 @@
 <sdf version="1.6">
   <model name="soft_block">
     <!-- 
-      静态属性：true表示软块固定不动
-      注意：虽然设为静态，但接触物理特性仍有效
+      静态属性：false表示软块可以运动/形变
+      对于硅胶材质，需要允许适当的形变和位移
     -->
-    <static>true</static>
+    <static>false</static>
     <!-- 
       模型位姿：相对于世界坐标系，格式: x y z roll pitch yaw
       此处设置的是模型默认位置，实际位置会在世界文件中被覆盖
@@ -53,50 +53,34 @@
           <box>
             <!-- 
               尺寸：[长 宽 高]
-              0.5 x 0.5 x 0.01米，表示一个薄而宽的板
-              高度0.01米特意设置得小，以模拟薄而软的表面
+              0.5 x 0.5 x 0.01米，将厚度改为1cm
+              高度0.01米用于模拟薄的软表面
             -->
             <size>0.5 0.5 0.01</size>
           </box>
         </geometry>
         <surface>
-          <!-- 摩擦特性：根据论文中的摩擦模型设置 -->
+          <!-- 物理参数 - 使用simulation_parameters_config.yaml中定义的值 -->
           <friction>
             <ode>
-              <!-- 设置为0.3，与论文中的摩擦系数μ匹配 -->
-              <mu>0.3</mu>
-              <mu2>0.3</mu2>
-              <!-- 主摩擦方向：沿x轴方向 -->
-              <fdir1>1 0 0</fdir1>
-              <!-- 添加滑移参数，增强接触稳定性 -->
-              <slip1>0.001</slip1>
-              <slip2>0.001</slip2>
+              <mu>0.0</mu>
+              <mu2>0.0</mu2>
+              <fdir1>0 0 1</fdir1>
+              <slip1>0.0</slip1>
+              <slip2>0.0</slip2>
             </ode>
           </friction>
-          <!-- 接触参数：精确实现赫兹接触理论 -->
           <contact>
             <ode>
-              <!-- 最小接触深度：接近0确保捕获所有接触 -->
-              <min_depth>0.0001</min_depth>
-              <!-- 最大接触速度：适中值平衡稳定性和响应性 -->
-              <max_vel>0.5</max_vel>
-              <!-- 精确的软体参数设置 -->
-              <soft_cfm>0.005</soft_cfm>  <!-- 约束力混合因子：较小值增加硬度 -->
-              <soft_erp>0.4</soft_erp>    <!-- 错误减少参数：较高值增强稳定性 -->
-              <!-- 赫兹模型的刚度和阻尼参数 -->
-              <kp>50000</kp>  <!-- 弹簧刚度：精确匹配论文中的50kPa -->
-              <kd>100</kd>    <!-- 阻尼系数：匹配论文的阻尼模型 -->
-              <!-- 添加赫兹弹性接触参数 -->
-              <elastic_modulus>1000.0</elastic_modulus>  <!-- 杨氏模量：1000Pa，与软接触模型匹配 -->
-              <poisson_ratio>0.45</poisson_ratio>        <!-- 泊松比：0.45模拟接近不可压缩的软体 -->
+              <min_depth>0.001</min_depth>        <!-- 增加最小深度，允许更深的穿透 -->
+              <max_vel>0.1</max_vel>              <!-- 增大最大接触速度 -->
+              <kp>100</kp>                        <!-- 大幅降低刚度系数，模拟极软材料 -->
+              <kd>10</kd>                         <!-- 降低阻尼系数 -->
+              <elastic_modulus>100.0</elastic_modulus>
+              <poisson_ratio>0.45</poisson_ratio>
+              <soft_cfm>0.1</soft_cfm>            <!-- 大幅增加软约束混合参数 -->
+              <soft_erp>0.2</soft_erp>            <!-- 设置软错误修正参数 -->
             </ode>
-            <!-- 添加Bullet物理引擎参数，确保在不同物理引擎中行为一致 -->
-            <bullet>
-              <soft_constraint_cfm>0.005</soft_constraint_cfm>
-              <soft_constraint_erp>0.4</soft_constraint_erp>
-              <kp>50000</kp>
-              <kd>100</kd>
-            </bullet>
           </contact>
         </surface>
       </collision>
@@ -128,28 +112,32 @@
     <gazebo>
       <!-- Gazebo标准材质：白色 -->
       <material>Gazebo/White</material>
-      <!-- 摩擦系数，增大以确保有足够的接触力 -->
-      <mu1>0.8</mu1>
-      <mu2>0.8</mu2>
+      <!-- 摩擦系数设置为0，消除XY平面的摩擦力 -->
+      <mu1>0.0</mu1>
+      <mu2>0.0</mu2>
       <!-- 
-        接触刚度系数：降低到50000更符合软体特性
-        论文中提到的软体材料(EcoFlex)刚度较低
+        接触刚度系数：降低到100模拟极软硅胶特性
+        这是关键参数，决定软块的可压缩性
       -->
-      <kp>50000</kp>
-      <!-- 阻尼系数：设置为100，符合论文中的阻尼模型 -->
-      <kd>100</kd>
-      <!-- 最小接触深度：设为0.0001以捕获微小接触 -->
-      <minDepth>0.0001</minDepth>
-      <!-- 最大接触速度：设为0.5，平衡响应和稳定性 -->
-      <maxVel>0.5</maxVel>
+      <kp>100</kp>
+      <!-- 阻尼系数：降低到10，与ODE设置保持一致 -->
+      <kd>10</kd>
+      <!-- 最小接触深度：增加到0.001，允许更深的压缩 -->
+      <minDepth>0.001</minDepth>
+      <!-- 最大接触速度：增加到0.1，允许更快的形变 -->
+      <maxVel>0.1</maxVel>
       <!-- 自碰撞：禁用模型内部的碰撞检测 -->
       <selfCollide>0</selfCollide>
       <!-- 激光回波强度：对激光传感器的反射强度 -->
       <laserRetro>0</laserRetro>
       <!-- 添加弹性模量参数，与软接触模型参数精确匹配 -->
-      <elastic_modulus>1000.0</elastic_modulus>
+      <elastic_modulus>100.0</elastic_modulus>
       <!-- 泊松比：根据论文中的材料特性 -->
       <poisson_ratio>0.45</poisson_ratio>
+      <!-- 大幅增加软约束混合参数，使接触极其柔和 -->
+      <soft_cfm>0.1</soft_cfm>
+      <!-- 设置软错误修正参数，降低收敛要求 -->
+      <soft_erp>0.2</soft_erp>
     </gazebo>
   </model>
 </sdf> 
