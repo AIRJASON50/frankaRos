@@ -86,6 +86,21 @@
   <param name="/circle_controller/force_controller/force_noise_min" value="$(arg force_noise_min)" />
   <param name="/circle_controller/force_controller/force_noise_max" value="$(arg force_noise_max)" />
 
+  <!-- 能量罐安全监控参数 -->
+  <param name="/circle_controller/energy_tank/capacity_max" value="15.0" />
+  <param name="/circle_controller/energy_tank/capacity_min" value="2.0" />
+  <param name="/circle_controller/energy_tank/threshold_warning" value="12.0" />
+  <param name="/circle_controller/energy_tank/threshold_critical" value="13.5" />
+  <param name="/circle_controller/energy_tank/threshold_emergency" value="14.5" />
+  <param name="/circle_controller/energy_tank/vel_linear_warning" value="1.2" />
+  <param name="/circle_controller/energy_tank/vel_linear_critical" value="1.5" />
+  <param name="/circle_controller/energy_tank/vel_angular_warning" value="1.0" />
+  <param name="/circle_controller/energy_tank/vel_angular_critical" value="1.25" />
+  <param name="/circle_controller/energy_tank/power_warning" value="40.0" />
+  <param name="/circle_controller/energy_tank/power_critical" value="50.0" />
+  <param name="/circle_controller/energy_tank/effective_mass" value="2.0" />
+  <param name="/circle_controller/energy_tank/effective_inertia" value="0.05" />
+
   <!-- 启动基础仿真 -->
   <include file="$(find franka_gazebo)/launch/fr3_with_soft_contact.launch">
     <arg name="trajectory_type" value="$(arg trajectory_type)"/>

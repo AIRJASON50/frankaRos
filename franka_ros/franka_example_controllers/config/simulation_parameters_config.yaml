@@ -17,7 +17,7 @@ circle_controller:
   center_x: 0.4                      # 轨迹中心X [m]
   center_y: 0.0                      # 轨迹中心Y [m] 
   center_z: 0.405                    # 轨迹中心Z [m]
-  speed_factor: 0.2                  # 轨迹速度因子
+  speed_factor: 0.1                  # 轨迹速度因子
     
   # 圆形轨迹参数
   circle_radius: 0.08                # 圆轨迹半径 [m]
@@ -38,10 +38,37 @@ circle_controller:
   # 自定义轨迹参数
   custom_trajectory_file: ""         # 自定义轨迹文件路径
 
+  # 能量罐安全监控配置 (基于FR3规格的保守设置)
+  energy_tank:
+    # 能量罐容量 [J]
+    capacity_max: 15.0              # 最大能量容量
+    capacity_min: 2.0               # 最小能量容量
+    
+    # 安全阈值 [J]
+    threshold_warning: 12.0         # 警告阈值
+    threshold_critical: 13.5        # 临界阈值
+    threshold_emergency: 14.5       # 紧急阈值
+    
+    # 速度限制 (FR3最大值的保守安全系数)
+    vel_linear_warning: 1.2         # 线速度警告阈值 [m/s] (FR3 max: 3.0)
+    vel_linear_critical: 1.5        # 线速度临界阈值 [m/s]
+    vel_angular_warning: 1.0        # 角速度警告阈值 [rad/s] (FR3 max: 2.5)
+    vel_angular_critical: 1.25      # 角速度临界阈值 [rad/s]
+    
+    # 功率限制 [W]
+    power_warning: 40.0             # 功率警告阈值
+    power_critical: 50.0            # 功率临界阈值
+    
+    # 有效惯性参数
+    effective_mass: 2.0             # 末端有效质量 [kg]
+    effective_inertia: 0.05         # 末端有效转动惯量 [kg⋅m²]
+
   # 软接触模型参数 - 基于Hertz-Hunt-Crossley模型
   contact_model:
-    young_modulus: 100.0            # 杨氏模量 [Pa] - 与model.sdf一致
-    poisson_ratio: 0.45              # 泊松比 - 近似不可压缩
+    young_modulus: 300000.0         # 软块杨氏模量 [Pa] - 300kPa
+    poisson_ratio: 0.45             # 软块泊松比 - 近似不可压缩
+    probe_young_modulus: 200000000000.0  # 探头杨氏模量 [Pa] - 200GPa (钢材)
+    probe_poisson_ratio: 0.3        # 探头泊松比 - 钢材典型值
     friction_coef: 0.0               # 摩擦系数 - 与model.sdf一致
     contact_radius: 0.002             # 接触工具半径 [m] - 圆形探针
     path_radius: 0.1                 # 路径半径 [m] - 圆周运动半径
@@ -55,7 +82,7 @@ circle_controller:
   # 深度控制参数
   depth_controller:
     target_depth: 0.001  # 目标深度 [m] - 增加到3mm，确保足够的深度进行控制
-    p_gain: 50.0         # 比例增益 - 增大以提高响应速度
+    p_gain: 30.0         # 比例增益 - 增大以提高响应速度
     i_gain: 10.0          # 积分增益 - 增大以消除稳态误差
     d_gain: 5.0          # 微分增益 - 增大以抑制振荡
     max_adjustment: 0.001  # 单次最大调整量 [m] - 增加调整量
@@ -117,8 +144,10 @@ circle_controller:
 
   # 接触模型参数
   soft_contact_model:
-    young_modulus: 1000.0    # 杨氏模量 [Pa] - 与model.sdf一致
-    poisson_ratio: 0.45      # 泊松比 - 与model.sdf一致
+    young_modulus: 300000.0      # 软块杨氏模量 [Pa] - 300kPa
+    poisson_ratio: 0.45          # 软块泊松比
+    probe_young_modulus: 200000000000.0  # 探头杨氏模量 [Pa] - 200GPa (钢材)
+    probe_poisson_ratio: 0.3     # 探头泊松比 - 钢材典型值
     contact_radius: 0.01     # 探头半径 [m]
     depth_threshold: 0.0002  # 接触判定阈值 [m]
     friction_coef: 0.3       # 摩擦系数 - 与model.sdf一致

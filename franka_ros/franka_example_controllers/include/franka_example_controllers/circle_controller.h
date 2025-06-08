@@ -22,6 +22,7 @@
 #include <franka_example_controllers/log_generator.h>
 #include <franka_example_controllers/trajectory_generator.h>
 #include <franka_example_controllers/force_generator.h>
+#include <franka_example_controllers/energy_tank_monitor.h>
 
 namespace franka_example_controllers {
 
@@ -224,6 +225,9 @@ class CircleController : public controller_interface::MultiInterfaceController<
   Eigen::Vector3d current_flange_position_; // 当前法兰位置
   Eigen::Vector3d current_probe_tip_position_; // 当前探头末端位置
   double current_calibrated_force_z_;      // 当前校准后的Z轴力
+
+  // 能量罐监控器
+  std::unique_ptr<EnergyTankMonitor> energy_tank_monitor_;
 };
 
 }  // namespace franka_example_controllers 

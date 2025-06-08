@@ -189,17 +189,21 @@ Eigen::Vector3d SoftContactModel::computeContactForce(double depth, const Eigen:
     return Eigen::Vector3d::Zero();
   }
   
-  // 根据论文公式计算接触力：F = (4/3) * E* * sqrt(R) * depth^(3/2)
-  // 其中 E* = E / (1 - ν²) 是有效弹性模量
+  // 根据论文公式计算组合弹性模量：1/E = (1-ν₁²)/E₁ + (1-ν₂²)/E₂
+  // 其中 E₁, ν₁ 是探头材料（钢），E₂, ν₂ 是软块材料
+  double probe_term = (1.0 - params_.probe_poisson_ratio * params_.probe_poisson_ratio) / params_.probe_young_modulus;
+  double soft_term = (1.0 - params_.poisson_ratio * params_.poisson_ratio) / params_.young_modulus;
+  double combined_modulus = 1.0 / (probe_term + soft_term);
   
-  // 计算有效弹性模量 (论文公式)
-  double effective_modulus = params_.young_modulus / (1.0 - params_.poisson_ratio * params_.poisson_ratio);
+  // 由于探头模量远大于软块模量，简化为论文中的近似：E ≈ E₂/(1-ν₂²)
+  // 但我们使用完整公式以确保精度
   
-  // 探头半径 R (论文中的接触半径)
-  double probe_radius = params_.contact_radius;  // 应该是0.005m (5mm半径)
+  // 根据论文Hertz接触理论：F = (4/3) * E* * √R * d^(3/2)
+  // 其中 d 是深度，R 是接触半径，E* 是有效弹性模量
+  double probe_radius = params_.contact_radius;  // 探头半径R
   
   // 计算弹性力 (Hertz接触理论)
-  double elastic_force = (4.0 / 3.0) * effective_modulus * 
+  double elastic_force = (4.0 / 3.0) * combined_modulus * 
                         std::sqrt(probe_radius) * 
                         std::pow(depth, 1.5);
   
@@ -380,9 +384,11 @@ void SoftContactModel::publishTheoreticalForce(const Eigen::Vector3d& theoretica
 }
 
 double SoftContactModel::computeEffectiveModulus() const {
-  // 有效弹性模量计算
-  // E* = E / (1 - ν²)
-  return params_.young_modulus / (1.0 - params_.poisson_ratio * params_.poisson_ratio);
+  // 根据论文公式计算组合弹性模量：1/E = (1-ν₁²)/E₁ + (1-ν₂²)/E₂
+  // 其中 E₁, ν₁ 是探头材料（钢），E₂, ν₂ 是软块材料
+  double probe_term = (1.0 - params_.probe_poisson_ratio * params_.probe_poisson_ratio) / params_.probe_young_modulus;
+  double soft_term = (1.0 - params_.poisson_ratio * params_.poisson_ratio) / params_.young_modulus;
+  return 1.0 / (probe_term + soft_term);
 }
 
 double SoftContactModel::computeContactStiffness(double depth) const {

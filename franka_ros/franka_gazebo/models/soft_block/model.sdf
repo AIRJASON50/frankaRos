@@ -76,7 +76,7 @@
               <max_vel>0.1</max_vel>              <!-- 增大最大接触速度 -->
               <kp>100</kp>                        <!-- 大幅降低刚度系数，模拟极软材料 -->
               <kd>10</kd>                         <!-- 降低阻尼系数 -->
-              <elastic_modulus>100.0</elastic_modulus>
+              <elastic_modulus>300000.0</elastic_modulus>
               <poisson_ratio>0.45</poisson_ratio>
               <soft_cfm>0.1</soft_cfm>            <!-- 大幅增加软约束混合参数 -->
               <soft_erp>0.2</soft_erp>            <!-- 设置软错误修正参数 -->
@@ -119,7 +119,7 @@
         接触刚度系数：降低到100模拟极软硅胶特性
         这是关键参数，决定软块的可压缩性
       -->
-      <kp>100</kp>
+      <kp>20000</kp>
       <!-- 阻尼系数：降低到10，与ODE设置保持一致 -->
       <kd>10</kd>
       <!-- 最小接触深度：增加到0.001，允许更深的压缩 -->
@@ -131,7 +131,7 @@
       <!-- 激光回波强度：对激光传感器的反射强度 -->
       <laserRetro>0</laserRetro>
       <!-- 添加弹性模量参数，与软接触模型参数精确匹配 -->
-      <elastic_modulus>100.0</elastic_modulus>
+      <elastic_modulus>300000.0</elastic_modulus>
       <!-- 泊松比：根据论文中的材料特性 -->
       <poisson_ratio>0.45</poisson_ratio>
       <!-- 大幅增加软约束混合参数，使接触极其柔和 -->

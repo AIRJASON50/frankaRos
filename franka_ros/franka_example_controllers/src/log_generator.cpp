@@ -68,26 +68,23 @@ void LogGenerator::initLogFile(const ContactParams& contact_params, double targe
   }
   
   try {
-    // 记录开始时间
-    start_time_ = ros::Time::now();
-    
-    // 获取日志文件路径，使用格式化时间作为文件名
-    std::string package_path = ros::package::getPath("franka_gazebo");
+    // 生成文件名
     std::string time_str = getFormattedTime();
-    log_file_path_ = package_path + "/logs/force_data_" + time_str + ".csv";
     
-    // 创建日志目录（如果不存在）
-    std::string log_dir = package_path + "/logs";
-    std::string cmd = "mkdir -p " + log_dir;
-    if (system(cmd.c_str()) != 0) {
-      ROS_ERROR_STREAM("Failed to create log directory: " << log_dir);
-      return;
-    }
+    // 修改日志文件路径为franka_gazebo/logs目录
+    std::string log_dir = ros::package::getPath("franka_gazebo") + "/logs";
+    log_file_path_ = log_dir + "/force_data_" + time_str + ".csv";
+    
+    // 确保logs目录存在
+    system(("mkdir -p " + log_dir).c_str());
+    
+    start_time_ = ros::Time::now();
     
     // 初始化力曲线可视化器
     if (!force_visualizer_) {
-      ros::NodeHandle nh; // 创建临时节点句柄
-      force_visualizer_ = std::make_unique<ForceDataVisualizer>(nh);
+      // 创建持久的节点句柄用于发布数据
+      static ros::NodeHandle visualization_nh; 
+      force_visualizer_ = std::make_unique<ForceDataVisualizer>(visualization_nh);
     }
     
     // 打开日志文件
@@ -188,11 +185,8 @@ void LogGenerator::logData(const ros::Time& time,
     return;
   }
   
-  // 发布力曲线数据用于rqt绘图 - 移到时间检查之前，确保实时发布
+  // 发布力曲线数据用于rqt绘图 - 确保安全调用
   if (force_visualizer_) {
-    if(theoretical_force > 0.0) {
-      theoretical_force += 2.0 + (0.5 + (rand() % 51) / 100.0);  // 生成0.5到1之间的随机数
-    }
     force_visualizer_->publishForceData(force(2), theoretical_force);
   }
   

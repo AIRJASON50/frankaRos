@@ -17,8 +17,10 @@ namespace franka_example_controllers {
  * @brief 接触参数结构体，定义软接触模型的物理特性
  */
 struct ContactParams {
-  double young_modulus;     // 材料杨氏模量 (Pa)
-  double poisson_ratio;     // 泊松比 (无量纲)
+  double young_modulus;     // 软块杨氏模量 (Pa)
+  double poisson_ratio;     // 软块泊松比 (无量纲)
+  double probe_young_modulus;   // 探头杨氏模量 (Pa)
+  double probe_poisson_ratio;   // 探头泊松比 (无量纲)
   double friction_coef;     // 摩擦系数 (无量纲)
   double contact_radius;    // 接触探头半径 (m)
   double path_radius;       // 路径圆半径 (m)

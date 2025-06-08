@@ -86,8 +86,10 @@ bool CircleController::init(hardware_interface::RobotHW* robot_hw,
   
   // 读取软接触模型参数
   ros::NodeHandle soft_contact_nh(node_handle, "contact_model");
-  contact_params_.young_modulus = 1000.0;  // 默认值：1kPa
-  contact_params_.poisson_ratio = 0.45;    // 默认值：近似不可压缩
+  contact_params_.young_modulus = 300000.0;  // 默认值：软块300kPa
+  contact_params_.poisson_ratio = 0.45;    // 默认值：软块泊松比
+  contact_params_.probe_young_modulus = 200000000000.0;  // 默认值：探头200GPa
+  contact_params_.probe_poisson_ratio = 0.3;  // 默认值：探头泊松比
   contact_params_.friction_coef = 0.3;     // 默认值：中等摩擦系数
   contact_params_.contact_radius = 0.01;   // 默认值：1cm半径的探头
   contact_params_.path_radius = 0.1;       // 默认值：10cm圆周路径半径
@@ -97,6 +99,8 @@ bool CircleController::init(hardware_interface::RobotHW* robot_hw,
   
   soft_contact_nh.getParam("young_modulus", contact_params_.young_modulus);
   soft_contact_nh.getParam("poisson_ratio", contact_params_.poisson_ratio);
+  soft_contact_nh.getParam("probe_young_modulus", contact_params_.probe_young_modulus);
+  soft_contact_nh.getParam("probe_poisson_ratio", contact_params_.probe_poisson_ratio);
   soft_contact_nh.getParam("friction_coef", contact_params_.friction_coef);
   soft_contact_nh.getParam("contact_radius", contact_params_.contact_radius);
   soft_contact_nh.getParam("path_radius", contact_params_.path_radius);
@@ -267,6 +271,13 @@ bool CircleController::init(hardware_interface::RobotHW* robot_hw,
     trajectory_generator_->setPreserveHeight(true);  // 校准和接近阶段保持高度
   }
 
+  // 初始化能量罐监控器
+  energy_tank_monitor_ = std::make_unique<EnergyTankMonitor>();
+  if (!energy_tank_monitor_->init(node_handle)) {
+    ROS_ERROR("Failed to initialize energy tank monitor");
+    return false;
+  }
+
   // 初始化成功
   return true;
 }
@@ -328,6 +339,12 @@ void CircleController::starting(const ros::Time& time) {
   
   circular_counter_ = 0;
   desired_pose_initialized_ = false; // 将在第一次update中初始化
+  
+  // 重置能量罐监控器
+  if (energy_tank_monitor_) {
+    energy_tank_monitor_->reset();
+    ROS_INFO("Energy tank monitor reset");
+  }
 }
 
 void CircleController::update(const ros::Time& time,
@@ -733,8 +750,28 @@ void CircleController::update(const ros::Time& time,
     
   tau_d_final << tau_task + tau_nullspace + coriolis;
   tau_d_final << saturateTorqueRate(tau_d_final, tau_J_d);
+  
+  // 能量罐安全监控和缩放
+  double safety_scale_factor = 1.0;
+  if (energy_tank_monitor_) {
+    safety_scale_factor = energy_tank_monitor_->updateAndGetScaleFactor(
+      tau_d_final, robot_state, jacobian, period);
     
-    for (size_t i = 0; i < 7; ++i) {
+    // 应用安全缩放因子
+    tau_d_final *= safety_scale_factor;
+    
+    // 输出安全状态信息
+    if (safety_scale_factor < 1.0) {
+      auto safety_level = energy_tank_monitor_->getCurrentSafetyLevel();
+      if (circular_counter_ % 100 == 0) { // 每100次循环输出一次
+        ROS_WARN("Energy tank safety scaling active: factor=%.2f, level=%d, energy=%.2f J", 
+                 safety_scale_factor, static_cast<int>(safety_level), 
+                 energy_tank_monitor_->getEnergyLevel());
+      }
+    }
+  }
+    
+  for (size_t i = 0; i < 7; ++i) {
     joint_handles_[i].setCommand(tau_d_final(i));
   }
 }

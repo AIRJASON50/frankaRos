@@ -89,6 +89,7 @@ add_library(franka_example_controllers
   src/log_generator.cpp
   src/trajectory_generator.cpp
   src/force_generator.cpp
+  src/energy_tank_monitor.cpp
 )
 
 add_dependencies(franka_example_controllers
