@@ -2,6 +2,9 @@ import serial
 import struct
 import time
 import threading
+import signal
+import sys
+import glob
 from collections import deque
 import matplotlib.pyplot as plt
 
@@ -13,6 +16,33 @@ labels = ['Fx', 'Fy', 'Fz', 'Mx', 'My', 'Mz']  # 通道对应的图例名称
 running = True  # 控制线程的运行状态
 is_zeroing = True  # 是否处于调零阶段
 
+# 添加信号处理器
+def signal_handler(sig, frame):
+    global running
+    print('\n信号中断检测到，正在安全停止...')
+    running = False
+    sys.exit(0)
+
+signal.signal(signal.SIGINT, signal_handler)
+
+def find_usb_port():
+    """
+    自动检测可用的USB串口
+    """
+    ports = glob.glob('/dev/ttyUSB*') + glob.glob('/dev/ttyACM*')
+    
+    for port in ports:
+        try:
+            ser = serial.Serial(port, 115200, timeout=1)
+            if ser.is_open:
+                print(f"找到USB设备: {port}")
+                ser.close()
+                return port
+        except (OSError, serial.SerialException):
+            continue
+    
+    print("未找到可用的USB串口设备")
+    return None
 
 def setup_serial(port='/dev/ttyUSB0', baudrate=115200):
     """
@@ -180,30 +210,53 @@ def plot_data():
 
 
 def main():
+    global running
+    
+    # 自动检测USB端口
+    port = find_usb_port()
+    if port is None:
+        print("错误：无法找到力传感器USB设备")
+        return
+    
     # 设置串口参数
-    ser = setup_serial(port='/dev/ttyUSB0', baudrate=115200)
+    ser = setup_serial(port=port, baudrate=115200)
+    if not ser.is_open:
+        print("错误：无法打开串口")
+        return
 
-    # 设置采样率
-    send_command(ser, 'AT+SMPF=300')
-    time.sleep(0.5)
-    send_command(ser, 'AT+GSD')
-
-    # 创建数据采集线程
-    read_thread = threading.Thread(target=read_data, args=(ser,), daemon=True)
-
-    # 启动数据采集线程
-    read_thread.start()
-
-    # 在主线程中运行绘图
     try:
+        # 设置采样率
+        send_command(ser, 'AT+SMPF=300')
+        time.sleep(0.5)
+        send_command(ser, 'AT+GSD')
+
+        # 创建数据采集线程
+        read_thread = threading.Thread(target=read_data, args=(ser,), daemon=True)
+
+        # 启动数据采集线程
+        read_thread.start()
+
+        # 在主线程中运行绘图
         plot_data()
+        
     except KeyboardInterrupt:
-        print("程序终止")
+        print("\n检测到中断信号")
+    except Exception as e:
+        print(f"运行时错误: {e}")
     finally:
-        global running
+        print("正在清理资源...")
         running = False
-        send_command(ser, 'AT+STOP')  # 停止连续传输
-        ser.close()
+        try:
+            send_command(ser, 'AT+STOP')  # 停止连续传输
+            time.sleep(0.1)
+        except:
+            pass
+        
+        if ser.is_open:
+            ser.close()
+            print("串口已关闭")
+        
+        print("程序已安全退出")
 
 
 if __name__ == '__main__':

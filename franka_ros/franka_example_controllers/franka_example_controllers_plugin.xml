@@ -59,4 +59,9 @@
           A controller that makes the end-effector move in a circle around the initial position.
       </description>
   </class>
+  <class name="franka_example_controllers/ContactController" type="franka_example_controllers::ContactController" base_class_type="controller_interface::ControllerBase">
+      <description>
+          A controller that implements force sensor calibration and contact control for probe-based interaction tasks. Features multi-stage control including calibration, approach, contact detection, and depth control phases.
+      </description>
+  </class>
 </library>

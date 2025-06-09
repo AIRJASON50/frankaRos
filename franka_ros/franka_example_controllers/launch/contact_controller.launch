@@ -1,0 +1,54 @@
+<?xml version="1.0" ?>
+<launch>
+  <!-- 机器人配置参数 -->
+  <arg name="robot" default="fr3" doc="choose your robot. Possible values: [panda, fr3]"/>
+  <arg name="arm_id" default="$(arg robot)" />
+  <arg name="robot_ip" default="172.16.0.2" />
+  <arg name="load_gripper" default="false" />
+  
+  <!-- 力传感器配置参数 -->
+  <arg name="force_sensor_baudrate" default="921600" />
+  <arg name="force_sensor_frequency" default="1000" />
+  <arg name="ros_publish_frequency" default="100" />
+  <!-- 是否启用力传感器可视化窗口 -->
+  <arg name="enable_force_visualizer" default="true" />
+  
+  <!-- 运动控制参数 -->
+  <group ns="$(arg arm_id)">
+    <group ns="motion_control">
+      <param name="circle_radius" value="0.075" />         <!-- 圆周半径 (m) -->
+      <param name="motion_frequency" value="0.2" />        <!-- 运动频率 (Hz, 5秒一圈) -->
+      <param name="probe_length" value="0.1" />            <!-- 探头长度 (m) -->
+    </group>
+  </group>
+  
+  <!-- 启动力传感器读取节点 -->
+  <node name="force_sensor_reader" pkg="franka_example_controllers" type="force_sensor_read" output="screen">
+    <param name="force_sensor/baudrate" value="$(arg force_sensor_baudrate)" />
+    <param name="force_sensor/frequency" value="$(arg force_sensor_frequency)" />
+    <param name="ros/publish_frequency" value="$(arg ros_publish_frequency)" />
+    <rosparam param="force_sensor/zero_samples">30</rosparam>
+  </node>
+  
+  <!-- 启动力传感器数据可视化窗口 -->
+  <node if="$(arg enable_force_visualizer)" 
+        name="force_sensor_visualizer" 
+        pkg="franka_example_controllers" 
+        type="force_sensor_visualizer.py" 
+        output="screen"
+        respawn="false">
+    <remap from="/force_sensor/wrench" to="/force_sensor/wrench" />
+  </node>
+  
+  <!-- 启动franka控制 -->
+  <include file="$(find franka_control)/launch/franka_control.launch" pass_all_args="true"/>
+  
+  <!-- 加载控制器配置 -->
+  <rosparam command="load" file="$(find franka_example_controllers)/config/franka_example_controllers.yaml" subst_value="true" />
+  
+  <!-- 启动控制器 -->
+  <node name="controller_spawner" pkg="controller_manager" type="spawner" respawn="false" output="screen" args="contact_controller"/>
+  
+  <!-- 启动rviz -->
+  <node pkg="rviz" type="rviz" output="screen" name="rviz" args="-d $(find franka_example_controllers)/launch/robot.rviz -f $(arg arm_id)_link0 --splash-screen $(find franka_visualization)/splash.png"/>
+</launch>

@@ -71,11 +71,11 @@ void LogGenerator::initLogFile(const ContactParams& contact_params, double targe
     // 生成文件名
     std::string time_str = getFormattedTime();
     
-    // 修改日志文件路径为franka_gazebo/logs目录
-    std::string log_dir = ros::package::getPath("franka_gazebo") + "/logs";
+    // 修改日志文件路径为franka_example_controllers/data目录
+    std::string log_dir = ros::package::getPath("franka_example_controllers") + "/data";
     log_file_path_ = log_dir + "/force_data_" + time_str + ".csv";
     
-    // 确保logs目录存在
+    // 确保data目录存在
     system(("mkdir -p " + log_dir).c_str());
     
     start_time_ = ros::Time::now();
@@ -190,9 +190,9 @@ void LogGenerator::logData(const ros::Time& time,
     force_visualizer_->publishForceData(force(2), theoretical_force);
   }
   
-  // 检查是否需要记录（每0.05秒记录一次）
+  // 检查是否需要记录（每0.01秒记录一次，确保能记录数据）
   double elapsed = (time - last_log_time_).toSec();
-  if (elapsed < 0.05) {
+  if (log_counter_ > 0 && elapsed < 0.01) {  // 降低到0.01秒，增加记录频率
     return;
   }
   

@@ -23,6 +23,7 @@ find_package(catkin REQUIRED COMPONENTS
   rospy
   urdf
   visualization_msgs
+  serial
 )
 
 find_package(Eigen3 REQUIRED)
@@ -68,6 +69,7 @@ catkin_package(
     roscpp
     urdf
     visualization_msgs
+    serial
   DEPENDS Franka
 )
 
@@ -90,6 +92,7 @@ add_library(franka_example_controllers
   src/trajectory_generator.cpp
   src/force_generator.cpp
   src/energy_tank_monitor.cpp
+  src/contact_controller.cpp
 )
 
 add_dependencies(franka_example_controllers
@@ -131,13 +134,29 @@ add_dependencies(teleop_gripper_node
   ${PROJECT_NAME}_gencfg
 )
 
+# 添加力传感器读取节点
+add_executable(force_sensor_read
+  src/force_sensor_read.cpp
+)
+target_include_directories(force_sensor_read PUBLIC
+  ${catkin_INCLUDE_DIRS}
+)
+target_link_libraries(force_sensor_read PUBLIC
+  ${catkin_LIBRARIES}
+)
+add_dependencies(force_sensor_read
+  ${${PROJECT_NAME}_EXPORTED_TARGETS}
+  ${catkin_EXPORTED_TARGETS}
+  ${PROJECT_NAME}_generate_messages_cpp
+)
+
 ## Installation
 install(TARGETS franka_example_controllers
   ARCHIVE DESTINATION ${CATKIN_PACKAGE_LIB_DESTINATION}
   LIBRARY DESTINATION ${CATKIN_PACKAGE_LIB_DESTINATION}
   RUNTIME DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
 )
-install(TARGETS teleop_gripper_node
+install(TARGETS teleop_gripper_node force_sensor_read
   RUNTIME DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
 )
 install(DIRECTORY include/${PROJECT_NAME}/
