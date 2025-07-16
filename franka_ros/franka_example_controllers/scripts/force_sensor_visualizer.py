@@ -20,6 +20,7 @@ import tkinter as tk
 from tkinter import ttk
 from std_msgs.msg import Float64
 import time
+from matplotlib.backends.backend_tkagg import NavigationToolbar2Tk
 
 class ForceSensorVisualizer:
     def __init__(self):
@@ -66,108 +67,146 @@ class ForceSensorVisualizer:
         rospy.loginfo("Force sensor zeroing in progress, please ensure no external forces...")
         
     def setup_gui(self):
-        """Setup GUI interface"""
-        self.root = tk.Tk()
-        self.root.title("Real-time Force Sensor Data Visualizer")
+        """Set up GUI elements"""
+        self.root.title("Force Sensor Data Visualizer")
         self.root.geometry("1200x800")
-        self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
         
-        # Create main frame
-        main_frame = ttk.Frame(self.root)
-        main_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        # Configure root grid
+        self.root.grid_rowconfigure(0, weight=1)
+        self.root.grid_columnconfigure(1, weight=1)
         
-        # Status information frame
-        status_frame = ttk.LabelFrame(main_frame, text="Status Information", padding="10")
+        # Create main frame structure
+        left_frame = ttk.Frame(self.root)
+        left_frame.grid(row=0, column=0, sticky="nsew", padx=5, pady=5)
+        
+        right_frame = ttk.Frame(self.root)
+        right_frame.grid(row=0, column=1, sticky="nsew", padx=5, pady=5)
+        right_frame.grid_rowconfigure(0, weight=1)
+        right_frame.grid_columnconfigure(0, weight=1)
+        
+        # === Left Panel: Status and Controls ===
+        # Status frame
+        status_frame = ttk.LabelFrame(left_frame, text="Status Information", padding=10)
         status_frame.pack(fill=tk.X, pady=(0, 10))
         
-        self.status_label = ttk.Label(status_frame, text="Initializing...", font=('Arial', 10))
-        self.status_label.pack()
+        # Force readings
+        self.force_x_label = ttk.Label(status_frame, text="Force X: 0.000 N", font=("Arial", 10))
+        self.force_x_label.pack(anchor=tk.W)
         
-        # Data frequency display
-        self.frequency_label = ttk.Label(status_frame, text="Data Frequency: 0.0 Hz", 
-                                        font=('Arial', 10, 'bold'), foreground='blue')
-        self.frequency_label.pack(pady=(5, 0))
+        self.force_y_label = ttk.Label(status_frame, text="Force Y: 0.000 N", font=("Arial", 10))
+        self.force_y_label.pack(anchor=tk.W)
         
-        # GUI update frequency display
-        self.gui_frequency_label = ttk.Label(status_frame, text="GUI Update: 100.0 Hz", 
-                                           font=('Arial', 9), foreground='green')
-        self.gui_frequency_label.pack(pady=(2, 0))
+        self.force_z_label = ttk.Label(status_frame, text="Force Z: 0.000 N", font=("Arial", 10, "bold"))
+        self.force_z_label.pack(anchor=tk.W)
         
-        # Drift correction status
-        self.drift_status_label = ttk.Label(status_frame, text="Drift Correction: Active", 
-                                          font=('Arial', 9), foreground='purple')
-        self.drift_status_label.pack(pady=(2, 0))
+        self.force_magnitude_label = ttk.Label(status_frame, text="Force Magnitude: 0.000 N", font=("Arial", 10))
+        self.force_magnitude_label.pack(anchor=tk.W)
         
-        # Real-time values display frame
-        values_frame = ttk.LabelFrame(main_frame, text="Real-time Values (After Zeroing)", padding=10)
-        values_frame.pack(fill=tk.X, pady=(0, 10))
+        # Separator
+        separator = ttk.Separator(status_frame, orient='horizontal')
+        separator.pack(fill=tk.X, pady=10)
         
-        # Create value display grid
-        self.value_labels = {}
-        for i, (key, unit) in enumerate([('Fx', 'N'), ('Fy', 'N'), ('Fz', 'N'), 
-                                        ('Mx', 'N·m'), ('My', 'N·m'), ('Mz', 'N·m')]):
-            row = i // 3
-            col = i % 3
-            
-            label_frame = ttk.Frame(values_frame)
-            label_frame.grid(row=row, column=col, padx=10, pady=5, sticky="w")
-            
-            name_label = ttk.Label(label_frame, text=f"{key}:", font=("Arial", 10, "bold"))
-            name_label.pack(side=tk.LEFT)
-            
-            value_label = ttk.Label(label_frame, text="0.000", font=("Arial", 10), foreground="blue")
-            value_label.pack(side=tk.LEFT, padx=(5, 0))
-            
-            unit_label = ttk.Label(label_frame, text=unit, font=("Arial", 10))
-            unit_label.pack(side=tk.LEFT, padx=(5, 0))
-            
-            self.value_labels[key] = value_label
+        # Data statistics
+        self.data_count_label = ttk.Label(status_frame, text="Data Points: 0", font=("Arial", 9))
+        self.data_count_label.pack(anchor=tk.W)
         
-        # Control buttons frame
-        button_frame = ttk.Frame(main_frame)
-        button_frame.pack(fill=tk.X, pady=(0, 10))
+        self.connection_label = ttk.Label(status_frame, text="Status: Disconnected", 
+                                         font=("Arial", 9), foreground="red")
+        self.connection_label.pack(anchor=tk.W)
         
-        self.zero_button = ttk.Button(button_frame, text="Re-Zero", command=self.start_zeroing)
-        self.zero_button.pack(side=tk.LEFT, padx=(0, 10))
+        self.update_rate_label = ttk.Label(status_frame, text="Update Rate: 0.0 Hz", font=("Arial", 9))
+        self.update_rate_label.pack(anchor=tk.W)
         
-        clear_button = ttk.Button(button_frame, text="Clear Plot", command=self.clear_plot)
-        clear_button.pack(side=tk.LEFT)
+        # Force statistics 
+        self.force_stats_label = ttk.Label(status_frame, text="Force Z Stats:\nMax: 0.000 N\nMin: 0.000 N\nAvg: 0.000 N", 
+                                          font=("Arial", 9), justify=tk.LEFT)
+        self.force_stats_label.pack(anchor=tk.W, pady=(10, 0))
         
-        # Plot frame
-        plot_frame = ttk.LabelFrame(main_frame, text="Real-time Waveforms", padding=10)
-        plot_frame.pack(fill=tk.BOTH, expand=True)
+        # Controls frame
+        controls_frame = ttk.LabelFrame(left_frame, text="Controls", padding=10)
+        controls_frame.pack(fill=tk.X, pady=(10, 0))
         
-        # Create matplotlib plots
-        self.fig, (self.ax1, self.ax2) = plt.subplots(2, 1, figsize=(12, 8))
-        self.fig.suptitle("6D Force Sensor Real-time Data", fontsize=14, fontweight='bold')
+        # Display options
+        display_frame = ttk.LabelFrame(controls_frame, text="Display Options", padding=5)
+        display_frame.pack(fill=tk.X, pady=(0, 10))
         
-        # Setup subplots
-        self.ax1.set_title("Forces (Fx, Fy, Fz)")
-        self.ax1.set_ylabel("Force (N)")
-        self.ax1.grid(True, alpha=0.3)
-        self.ax1.legend(['Fx', 'Fy', 'Fz'], loc='upper right')
+        self.show_all_forces = tk.BooleanVar(value=False)
+        ttk.Checkbutton(display_frame, text="Show All Force Components", 
+                       variable=self.show_all_forces).pack(anchor=tk.W)
         
-        self.ax2.set_title("Torques (Mx, My, Mz)")
-        self.ax2.set_xlabel("Time (Sample Points)")
-        self.ax2.set_ylabel("Torque (N·m)")
-        self.ax2.grid(True, alpha=0.3)
-        self.ax2.legend(['Mx', 'My', 'Mz'], loc='upper right')
+        self.show_magnitude = tk.BooleanVar(value=True)
+        ttk.Checkbutton(display_frame, text="Show Force Magnitude", 
+                       variable=self.show_magnitude).pack(anchor=tk.W)
         
-        # Initialize lines
-        self.lines = {}
-        colors = ['red', 'green', 'blue']
-        for i, key in enumerate(['Fx', 'Fy', 'Fz']):
-            line, = self.ax1.plot([], [], color=colors[i], label=key, linewidth=2)
-            self.lines[key] = line
-            
-        for i, key in enumerate(['Mx', 'My', 'Mz']):
-            line, = self.ax2.plot([], [], color=colors[i], label=key, linewidth=2)
-            self.lines[key] = line
+        self.show_raw_force_z = tk.BooleanVar(value=False)
+        ttk.Checkbutton(display_frame, text="Show Raw Force Z", 
+                       variable=self.show_raw_force_z).pack(anchor=tk.W)
         
-        # Embed matplotlib in tkinter
+        # Time window control
+        time_frame = ttk.Frame(display_frame)
+        time_frame.pack(fill=tk.X, pady=(5, 0))
+        
+        ttk.Label(time_frame, text="Time Window:").pack(side=tk.LEFT)
+        self.time_window_var = tk.StringVar(value="30")
+        time_spinbox = ttk.Spinbox(time_frame, from_=5, to=300, width=8, textvariable=self.time_window_var)
+        time_spinbox.pack(side=tk.LEFT, padx=(5, 0))
+        ttk.Label(time_frame, text="seconds").pack(side=tk.LEFT, padx=(5, 0))
+        
+        # Add control buttons
+        button_frame = ttk.Frame(controls_frame)
+        button_frame.pack(fill=tk.X, pady=(10, 0))
+        
+        # Zero sensor button
+        self.zero_button = ttk.Button(button_frame, text="Reset Zero Point", 
+                                     command=self.start_zeroing, width=12)
+        self.zero_button.pack(side=tk.LEFT, padx=(0, 5))
+        
+        # Clear data button
+        self.clear_button = ttk.Button(button_frame, text="Clear Data", 
+                                      command=self.clear_plot, width=12)
+        self.clear_button.pack(side=tk.LEFT, padx=(0, 5))
+        
+        # ✅ Save image button - English text
+        self.save_button = ttk.Button(button_frame, text="Save Image", 
+                                     command=self.save_plot_image, width=12)
+        self.save_button.pack(side=tk.LEFT, padx=(0, 5))
+        
+        # Add second row of buttons
+        button_frame2 = ttk.Frame(controls_frame)
+        button_frame2.pack(fill=tk.X, pady=(5, 0))
+        
+        # ✅ Export Force Z button - English text
+        self.export_button = ttk.Button(button_frame2, text="Export Force Z", 
+                                       command=self.export_force_z_data, width=12)
+        self.export_button.pack(side=tk.LEFT, padx=(0, 5))
+        
+        # === Right Panel: Plot ===
+        plot_frame = ttk.Frame(right_frame)
+        plot_frame.grid(row=0, column=0, sticky="nsew")
+        plot_frame.grid_rowconfigure(0, weight=1)
+        plot_frame.grid_columnconfigure(0, weight=1)
+        
+        # Create matplotlib figure
+        self.fig, self.ax = plt.subplots(figsize=(10, 6))
+        self.fig.patch.set_facecolor('white')
+        
+        # ✅ English plot labels and title
+        self.ax.set_xlabel('Time (seconds)', fontsize=12)
+        self.ax.set_ylabel('Force (N)', fontsize=12)
+        self.ax.set_title('Force Sensor Data - Real-time Plot', fontsize=14, fontweight='bold')
+        self.ax.grid(True, alpha=0.3)
+        self.ax.set_axisbelow(True)
+        
+        # Create canvas
         self.canvas = FigureCanvasTkAgg(self.fig, plot_frame)
         self.canvas.draw()
-        self.canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+        self.canvas.get_tk_widget().grid(row=0, column=0, sticky="nsew")
+        
+        # Add toolbar
+        toolbar_frame = ttk.Frame(plot_frame)
+        toolbar_frame.grid(row=1, column=0, sticky="ew")
+        self.toolbar = NavigationToolbar2Tk(self.canvas, toolbar_frame)
+        self.toolbar.update()
         
     def force_callback(self, msg):
         """Force sensor data callback function"""
@@ -243,51 +282,209 @@ class ForceSensorVisualizer:
                 buffer.clear()
         rospy.loginfo("Plot data cleared")
         
-    def update_plot(self):
-        """Update plot display"""
-        if rospy.is_shutdown():
-            return
-            
-        with self.data_lock:
-            # Update real-time value display
-            for key, label in self.value_labels.items():
-                value = self.current_data[key]
-                if abs(value) < 0.001:
-                    label.config(text="0.000")
-                else:
-                    label.config(text=f"{value:.3f}")
-            
-            # Update plots
-            for key, line in self.lines.items():
-                y_data = list(self.data_buffers[key])
-                x_data = list(range(len(y_data)))
-                line.set_data(x_data, y_data)
-            
-            # Adjust axis ranges
-            if len(self.data_buffers['Fx']) > 0:
-                # Force plot
-                all_forces = []
-                for key in ['Fx', 'Fy', 'Fz']:
-                    all_forces.extend(list(self.data_buffers[key]))
-                if all_forces:
-                    force_range = max(abs(min(all_forces)), abs(max(all_forces)), 1.0)
-                    self.ax1.set_xlim(0, self.max_points)
-                    self.ax1.set_ylim(-force_range*1.1, force_range*1.1)
-                
-                # Torque plot  
-                all_torques = []
-                for key in ['Mx', 'My', 'Mz']:
-                    all_torques.extend(list(self.data_buffers[key]))
-                if all_torques:
-                    torque_range = max(abs(min(all_torques)), abs(max(all_torques)), 0.01)
-                    self.ax2.set_xlim(0, self.max_points)
-                    self.ax2.set_ylim(-torque_range*1.1, torque_range*1.1)
-        
-        # Redraw plots
+    def save_plot_image(self):
+        """保存当前绘图为图像文件"""
         try:
-            self.canvas.draw()
-        except:
-            pass
+            import tkinter.filedialog as filedialog
+            import os
+            from datetime import datetime
+            
+            # 生成默认文件名
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            default_filename = f"force_sensor_plot_{timestamp}.png"
+            
+            # 弹出保存对话框
+            filename = filedialog.asksaveasfilename(
+                defaultextension=".png",
+                initialvalue=default_filename,
+                filetypes=[
+                    ("PNG files", "*.png"),
+                    ("PDF files", "*.pdf"),
+                    ("SVG files", "*.svg"),
+                    ("All files", "*.*")
+                ],
+                title="保存力传感器绘图"
+            )
+            
+            if filename:
+                # 保存图像
+                self.fig.savefig(filename, dpi=300, bbox_inches='tight', 
+                               facecolor='white', edgecolor='none')
+                rospy.loginfo(f"图像已保存到: {filename}")
+                
+                # 更新状态显示
+                self.status_label.config(text=f"图像已保存: {os.path.basename(filename)}", 
+                                       foreground="blue")
+                # 3秒后恢复状态显示
+                self.root.after(3000, lambda: self.status_label.config(
+                    text="数据采集中...", foreground="green"))
+            
+        except Exception as e:
+            rospy.logerr(f"保存图像时出错: {e}")
+            self.status_label.config(text=f"保存失败: {str(e)}", foreground="red")
+    
+    def export_force_z_data(self):
+        """导出Force_z数据到CSV文件"""
+        try:
+            import tkinter.filedialog as filedialog
+            import csv
+            import os
+            from datetime import datetime
+            
+            with self.data_lock:
+                fz_data = list(self.data_buffers['Fz'])
+            
+            if not fz_data:
+                rospy.logwarn("没有Force_z数据可以导出")
+                self.status_label.config(text="没有数据可导出", foreground="orange")
+                return
+            
+            # 生成默认文件名
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            default_filename = f"force_z_data_{timestamp}.csv"
+            
+            # 弹出保存对话框
+            filename = filedialog.asksaveasfilename(
+                defaultextension=".csv",
+                initialvalue=default_filename,
+                filetypes=[
+                    ("CSV files", "*.csv"),
+                    ("Text files", "*.txt"),
+                    ("All files", "*.*")
+                ],
+                title="导出Force_z数据"
+            )
+            
+            if filename:
+                # 写入CSV文件
+                with open(filename, 'w', newline='', encoding='utf-8') as csvfile:
+                    writer = csv.writer(csvfile)
+                    
+                    # 写入头部信息
+                    writer.writerow(['# Force_z数据导出'])
+                    writer.writerow(['# 导出时间:', timestamp])
+                    writer.writerow(['# 数据点数:', len(fz_data)])
+                    writer.writerow(['# 列定义: 样本序号, Force_z值(N)'])
+                    writer.writerow([])  # 空行
+                    
+                    # 写入CSV头
+                    writer.writerow(['sample_index', 'force_z_N'])
+                    
+                    # 写入数据
+                    for i, value in enumerate(fz_data):
+                        writer.writerow([i, f"{value:.6f}"])
+                
+                rospy.loginfo(f"Force_z数据已导出到: {filename}")
+                rospy.loginfo(f"导出了 {len(fz_data)} 个数据点")
+                
+                # 更新状态显示
+                self.status_label.config(text=f"数据已导出: {os.path.basename(filename)}", 
+                                       foreground="blue")
+                # 3秒后恢复状态显示
+                self.root.after(3000, lambda: self.status_label.config(
+                    text="数据采集中...", foreground="green"))
+                    
+        except Exception as e:
+            rospy.logerr(f"导出Force_z数据时出错: {e}")
+            self.status_label.config(text=f"导出失败: {str(e)}", foreground="red")
+        
+    def update_plot(self):
+        """Update the matplotlib plot with latest data"""
+        with self.data_lock:
+            if not self.data_buffers:
+                return
+                
+            # Get time window
+            try:
+                time_window = float(self.time_window_var.get())
+            except:
+                time_window = 30.0
+                
+            # Get current time and calculate cutoff
+            current_time = time.time()
+            cutoff_time = current_time - time_window
+            
+            # Clear previous plot
+            self.ax.clear()
+            
+            # ✅ English plot labels and title
+            self.ax.set_xlabel('Time (seconds)', fontsize=12)
+            self.ax.set_ylabel('Force (N)', fontsize=12)
+            self.ax.set_title('Force Sensor Data - Real-time Plot', fontsize=14, fontweight='bold')
+            self.ax.grid(True, alpha=0.3)
+            self.ax.set_axisbelow(True)
+            
+            plot_lines = []
+            
+            # Plot Force Z (always shown)
+            force_z_data = self.data_buffers.get('Fz', [])
+            if force_z_data:
+                # Filter data by time window
+                filtered_data = [(t, val) for t, val in force_z_data if t >= cutoff_time]
+                if filtered_data:
+                    times, values = zip(*filtered_data)
+                    # Convert to relative time
+                    rel_times = [t - current_time for t in times]
+                    line, = self.ax.plot(rel_times, values, 'b-', linewidth=2, alpha=0.8)
+                    plot_lines.append((line, 'Force Z (Filtered)'))  # ✅ English legend
+            
+            # Plot all force components if selected
+            if self.show_all_forces.get():
+                for component, color in [('Fx', 'red'), ('Fy', 'green')]:
+                    data = self.data_buffers.get(component, [])
+                    if data:
+                        filtered_data = [(t, val) for t, val in data if t >= cutoff_time]
+                        if filtered_data:
+                            times, values = zip(*filtered_data)
+                            rel_times = [t - current_time for t in times]
+                            line, = self.ax.plot(rel_times, values, color=color, linewidth=1.5, alpha=0.7)
+                            # ✅ English legend names
+                            legend_name = component.replace('_', ' ')  # Force_X -> Force X
+                            plot_lines.append((line, legend_name))
+            
+            # Plot force magnitude if selected
+            if self.show_magnitude.get():
+                magnitude_data = self.data_buffers.get('Force_Magnitude', [])
+                if magnitude_data:
+                    filtered_data = [(t, val) for t, val in magnitude_data if t >= cutoff_time]
+                    if filtered_data:
+                        times, values = zip(*filtered_data)
+                        rel_times = [t - current_time for t in times]
+                        line, = self.ax.plot(rel_times, values, 'purple', linewidth=2, alpha=0.6, linestyle='--')
+                        plot_lines.append((line, 'Force Magnitude'))  # ✅ English legend
+            
+            # Plot raw Force Z if selected
+            if self.show_raw_force_z.get():
+                raw_data = self.data_buffers.get('Raw_Force_Z', [])
+                if raw_data:
+                    filtered_data = [(t, val) for t, val in raw_data if t >= cutoff_time]
+                    if filtered_data:
+                        times, values = zip(*filtered_data)
+                        rel_times = [t - current_time for t in times]
+                        line, = self.ax.plot(rel_times, values, 'orange', linewidth=1, alpha=0.5, linestyle=':')
+                        plot_lines.append((line, 'Force Z (Raw)'))  # ✅ English legend
+            
+            # Add legend if there are lines to show
+            if plot_lines:
+                lines, labels = zip(*plot_lines)
+                self.ax.legend(lines, labels, loc='upper right', fontsize=10)
+            
+            # Set axis limits
+            self.ax.set_xlim(-time_window, 0)
+            
+            # Auto-scale y-axis with some padding
+            try:
+                self.ax.relim()
+                self.ax.autoscale_view(scalex=False, scaley=True)
+                y_min, y_max = self.ax.get_ylim()
+                y_range = y_max - y_min
+                if y_range > 0:
+                    self.ax.set_ylim(y_min - 0.1 * y_range, y_max + 0.1 * y_range)
+            except:
+                pass
+            
+            # Refresh canvas
+            self.canvas.draw_idle()
         
         # Schedule next update - 100Hz update frequency (10ms interval)
         self.root.after(10, self.update_plot)

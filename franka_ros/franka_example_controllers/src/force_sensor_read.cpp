@@ -36,6 +36,12 @@ private:
     std::deque<std::vector<double>> data_buffer_;
     static const int BUFFER_SIZE = 100;
     
+    // ==== 新增: 低通滤波相关 ====
+    double filter_alpha_;                       // EMA平滑系数
+    bool filter_initialized_;
+    std::vector<double> filtered_forces_;       // 上一次滤波结果
+    // ============================
+    
     // 频率测量
     std::chrono::steady_clock::time_point last_packet_time_;
     std::deque<double> frequency_buffer_;
@@ -53,6 +59,13 @@ public:
         current_frequency_(0.0),
         drift_monitor_(6),
         enable_drift_correction_(true) {
+        
+        // ==== 读取滤波参数并初始化 ====
+        ros::NodeHandle pnh("~");
+        pnh.param("force_sensor/filter_alpha", filter_alpha_, 0.2); // 默认alpha=0.2
+        filter_initialized_ = false;
+        filtered_forces_.assign(6, 0.0);
+        // =================================
         
         // 初始化发布器 - 提高队列大小和发布频率
         wrench_pub_ = nh.advertise<geometry_msgs::WrenchStamped>("force_sensor/wrench", 1000);
@@ -357,7 +370,7 @@ private:
         }
     }
     
-    bool isValidForce(double force, double min_val = -500.0, double max_val = 500.0) {
+    bool isValidForce(double force, double min_val = -1000.0, double max_val = 1000.0) {
         return force >= min_val && force <= max_val && std::isfinite(force);
     }
     
@@ -461,8 +474,9 @@ private:
                                             checkAndCorrectDrift(corrected_forces, forces);
                                         }
                                         
-                                        // 发布处理后的数据
-                                        publishWrench(corrected_forces, false, package_no);
+                                        // 低通滤波，减少毛刺
+                                        std::vector<double> smooth_forces = applyLowPassFilter(corrected_forces);
+                                        publishWrench(smooth_forces, false, package_no);
                                     }
                                     
                                     // 始终发布原始数据
@@ -525,16 +539,23 @@ private:
     void processZeroingData(const std::vector<double>& forces) {
         std::lock_guard<std::mutex> lock(data_mutex_);
         
-        // Force validation
+        // Force validation - 调零阶段使用更宽松的验证条件
         bool valid = true;
         for (const auto& force : forces) {
-            if (!isValidForce(force)) {
+            // 调零阶段使用更大的范围：-2000到2000
+            if (!isValidForce(force, -2000.0, 2000.0)) {
                 valid = false;
                 break;
             }
         }
         
         if (!valid) {
+            // 输出无效数据的调试信息
+            static int invalid_count = 0;
+            if (++invalid_count % 10 == 0) {  // 每10次打印一次
+                ROS_WARN("Force Sensor: Invalid data detected during zeroing (count: %d): [%.1f, %.1f, %.1f, %.1f, %.1f, %.1f]",
+                         invalid_count, forces[0], forces[1], forces[2], forces[3], forces[4], forces[5]);
+            }
             return;  // Skip invalid data
         }
         
@@ -566,6 +587,11 @@ private:
             
             is_zeroing_ = false;
             ROS_INFO("Force Sensor: Zeroing completed. Zero offsets: [%.3f, %.3f, %.3f, %.3f, %.3f, %.3f]",
+                     zero_offsets_[0], zero_offsets_[1], zero_offsets_[2], 
+                     zero_offsets_[3], zero_offsets_[4], zero_offsets_[5]);
+                     
+            // 输出调零完成的中文提示
+            ROS_INFO("力传感器调零完成。调零偏移值: Fx=%.3f, Fy=%.3f, Fz=%.3f, Mx=%.3f, My=%.3f, Mz=%.3f",
                      zero_offsets_[0], zero_offsets_[1], zero_offsets_[2], 
                      zero_offsets_[3], zero_offsets_[4], zero_offsets_[5]);
         }
@@ -656,6 +682,20 @@ private:
             }
         }
     }
+
+    // ==== 新增: 低通滤波实现 ====
+    std::vector<double> applyLowPassFilter(const std::vector<double>& input) {
+        if (!filter_initialized_) {
+            filtered_forces_ = input;
+            filter_initialized_ = true;
+            return filtered_forces_;
+        }
+        for (size_t i = 0; i < input.size() && i < filtered_forces_.size(); ++i) {
+            filtered_forces_[i] = filter_alpha_ * input[i] + (1.0 - filter_alpha_) * filtered_forces_[i];
+        }
+        return filtered_forces_;
+    }
+    // ============================
 };
 
 int main(int argc, char** argv) {
@@ -667,10 +707,20 @@ int main(int argc, char** argv) {
         
         ROS_INFO("力传感器读取节点启动，等待调零完成...");
         
-        // 等待调零完成
+        // 等待调零完成，设置30秒超时
+        auto start_time = std::chrono::steady_clock::now();
+        const auto timeout_duration = std::chrono::seconds(30);
+        
         while (ros::ok() && !sensor_reader.isZeroingComplete()) {
             ros::spinOnce();
             std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            
+            // 检查超时
+            auto current_time = std::chrono::steady_clock::now();
+            if (current_time - start_time > timeout_duration) {
+                ROS_WARN("Force Sensor: Zeroing timeout after 30 seconds, continuing with default offsets...");
+                break;
+            }
         }
         
         if (sensor_reader.isZeroingComplete()) {
@@ -680,9 +730,12 @@ int main(int argc, char** argv) {
             auto offsets = sensor_reader.getZeroOffsets();
             ROS_INFO("最终零偏值: Fx=%.3f, Fy=%.3f, Fz=%.3f, Mx=%.3f, My=%.3f, Mz=%.3f",
                     offsets[0], offsets[1], offsets[2], offsets[3], offsets[4], offsets[5]);
+        } else {
+            ROS_WARN("力传感器调零未完成，但继续运行（可能使用默认零偏值）");
         }
         
         // 主循环
+        ROS_INFO("力传感器读取节点进入主循环...");
         ros::spin();
         
     } catch (const std::exception& e) {

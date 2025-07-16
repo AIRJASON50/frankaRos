@@ -1,7 +1,7 @@
 <?xml version="1.0" ?>
 <launch>
   <!-- 机器人配置参数 -->
-  <arg name="robot" default="fr3" doc="choose your robot. Possible values: [panda, fr3]"/>
+  <arg name="robot" default="panda" doc="choose your robot. Possible values: [panda, fr3]"/>
   <arg name="arm_id" default="$(arg robot)" />
   <arg name="robot_ip" default="172.16.0.2" />
   <arg name="load_gripper" default="false" />
@@ -20,6 +20,18 @@
       <param name="motion_frequency" value="0.2" />        <!-- 运动频率 (Hz, 5秒一圈) -->
       <param name="probe_length" value="0.1" />            <!-- 探头长度 (m) -->
     </group>
+    
+    <!-- ==== z轴力反馈控制参数 ==== -->
+    <group ns="force_control">
+      <param name="kp" value="0.001" />                    <!-- PD控制器比例增益 (m/N) - 大幅降低避免过大调节 -->
+      <param name="kd" value="0.0005" />                   <!-- PD控制器微分增益 (m/(N*s)) - 相应降低 -->
+      <param name="z_offset_max" value="0.005" />          <!-- z轴最大上升幅度 (m) - 减小到5mm -->
+      <param name="z_offset_min" value="-0.005" />         <!-- z轴最大下降幅度 (m) - 减小到5mm -->
+      <param name="max_change_per_step" value="0.0002" />  <!-- 单次最大变化量 (m) - 0.2mm -->
+      <param name="force_deadzone" value="0.05" />         <!-- 力误差死区 (N) - 小误差不调节 -->
+      <param name="smooth_alpha" value="0.05" />           <!-- 平滑滤波系数 - 更强的平滑 -->
+    </group>
+    <!-- ========================== -->
   </group>
   
   <!-- 启动力传感器读取节点 -->
@@ -28,6 +40,17 @@
     <param name="force_sensor/frequency" value="$(arg force_sensor_frequency)" />
     <param name="ros/publish_frequency" value="$(arg ros_publish_frequency)" />
     <rosparam param="force_sensor/zero_samples">30</rosparam>
+    
+    <!-- ==== 增强的滤波参数配置 - 优化版 ==== -->
+    <!-- 低通滤波参数：提高alpha值以减少延迟，保持足够的滤波效果 -->
+    <param name="force_sensor/filter_alpha" value="0.25" />  <!-- 从0.08提高到0.25，减少延迟 -->
+    
+    <!-- 异常值检测参数：适度提高阈值，避免误判正常力值变化 -->
+    <param name="force_sensor/outlier_threshold_multiplier" value="3.0" />  <!-- 从2.5提高到3.0 -->
+    
+    <!-- 禁用自适应滤波：简化滤波逻辑，减少计算开销 -->
+    <param name="force_sensor/use_adaptive_filtering" value="false" />
+    <!-- ============================================ -->
   </node>
   
   <!-- 启动力传感器数据可视化窗口 -->
