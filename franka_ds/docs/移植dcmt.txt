@@ -1,0 +1,214 @@
+# franka_ros 系统架构分析文档
+## 基于 contact_controller.launch 的系统架构总结
+
+> **核心功能**: `roslaunch franka_example_controllers contact_controller.launch`  
+> **功能描述**: 集成机械臂、力传感器的接触式控制系统，实现力反馈圆周运动控制
+
+---
+
+## 1. 系统组成部分
+
+### 1.1 机械臂系统 (@frkdocs)
+
+**设备型号**: 
+- **Franka Emika Panda** (默认): 7自由度协作机械臂
+- **Franka Emika FR3**: 可选的新一代机械臂型号
+- **IP地址**: 172.16.0.2 (默认配置)
+
+**专用文档位置**:
+- `/docs/frkdocs/franka_ros Documentation.markdown` (34KB, 655行)
+  - **内容**: 完整的franka_ros功能文档，包含各个package的详细说明
+  - **覆盖**: franka_description, franka_control, franka_gripper等核心模块
+- `/docs/frkdocs/libfranka Documentation.markdown` (17KB, 309行)  
+  - **内容**: libfranka底层库文档，机械臂控制接口规范
+- `/docs/frkdocs/Franka Control Interface Specifications.markdown` (11KB, 203行)
+  - **内容**: 控制接口技术规范，包含控制器设计规范
+
+### 1.2 力传感器系统 (@力传感器)
+
+**设备型号**: 
+- **主要型号**: M8128 六轴力传感器数据采集卡
+- **备选型号**: M4313MXB (简化版本)
+- **通信**: 串口通信，波特率921600，采样频率1000Hz，ROS发布频率100Hz
+
+**专用文档位置**:
+- `/docs/力传感器/M8128 Users' Manual V2.markdown` (17KB, 414行)
+  - **内容**: M8128完整用户手册，包含硬件配置、通信协议、指令系统
+  - **厂商**: 南宁宇立仪器有限公司 (Sunrise Instruments)
+- `/docs/力传感器/M4313MXB Users' Manual V1.markdown` (6.9KB, 145行)
+  - **内容**: M4313MXB用户手册，简化版本传感器
+- `/docs/力传感器/forcesenseRead.py` (7.2KB, 264行)
+  - **内容**: Python版本的力传感器数据读取脚本，包含数据解析、可视化
+
+### 1.3 PC系统 (当前系统)
+
+**操作系统**: Linux 5.15.76-rt53 (实时内核)
+**ROS版本**: ROS1 (基于catkin工作空间)
+**工作目录**: `/home/jason/ws/catkin_ws/src`
+
+---
+
+## 2. 当前实现功能
+
+### 2.1 核心控制功能
+
+**主控制器**: `contact_controller`
+- **圆周运动控制**: 半径7.5cm的精确圆周轨迹
+- **力反馈控制**: 基于z轴力的PD控制器，目标力跟踪
+- **接触检测**: 多阶段状态机控制（接近→接触→圆周运动）
+- **能量罐监控**: 安全能量管理和碰撞保护
+
+**运动参数配置**:
+- 圆周半径: 0.075m
+- 运动频率: 0.2Hz (5秒一圈)  
+- 探头长度: 0.1m
+- z轴调节范围: ±5mm
+- 力反馈死区: 0.05N
+
+### 2.2 数据处理功能
+
+**力传感器数据流**:
+1. **原始数据获取**: M8128传感器 → USB串口 → ROS
+2. **数据滤波**: EMA滤波 (α=0.25) + 异常值检测
+3. **调零校准**: 30样本自动调零 + 漂移校正
+4. **实时发布**: `/force_sensor/wrench` (100Hz)
+
+**可视化功能**:
+- 实时力数据图表 (`force_sensor_visualizer.py`)
+- RViz 3D可视化界面
+- 状态机阶段发布
+
+---
+
+## 3. 核心文件分布
+
+### 3.1 启动配置文件
+```
+franka_example_controllers/launch/contact_controller.launch
+└── 主启动文件，集成所有组件启动
+    ├── franka_control/launch/franka_control.launch  
+    │   └── 机械臂底层控制启动
+    ├── franka_example_controllers/config/franka_example_controllers.yaml
+    │   └── 控制器参数配置
+    └── franka_example_controllers/launch/robot.rviz
+        └── RViz可视化配置
+```
+
+### 3.2 控制器核心代码
+```
+franka_example_controllers/
+├── src/contact_controller.cpp              # 主控制器实现 (1400+行)
+├── include/franka_example_controllers/     
+│   └── contact_controller.h                # 控制器头文件定义
+├── src/force_sensor_read.cpp               # 力传感器读取节点 (C++版本)
+└── scripts/force_sensor_visualizer.py     # 力数据可视化脚本
+```
+
+### 3.3 机械臂控制架构
+```
+franka_control/
+├── src/franka_control_node.cpp            # 机械臂控制节点主程序
+├── launch/franka_control.launch           # 机械臂启动配置  
+├── config/franka_control_node.yaml        # 控制节点参数
+└── config/default_controllers.yaml        # 默认控制器配置
+
+franka_description/
+├── robots/panda/panda.urdf.xacro          # Panda机械臂URDF模型
+├── robots/fr3/fr3.urdf.xacro              # FR3机械臂URDF模型
+└── meshes/                                # 3D网格文件 (碰撞检测+可视化)
+```
+
+### 3.4 硬件接口层
+```
+franka_hw/
+└── # 机械臂硬件接口封装 (连接libfranka)
+
+franka_gripper/  
+└── # 夹爪控制模块 (可选)
+
+franka_msgs/
+└── # 自定义消息类型定义
+```
+
+---
+
+## 4. 系统架构图
+
+```
+┌─────────────────────────────────────────────────────────┐
+│                    ROS Layer                            │
+├─────────────────────────────────────────────────────────┤
+│  contact_controller.launch                              │
+│  ├── contact_controller (C++)                           │
+│  │   ├── 状态机控制 (8个阶段)                             │ 
+│  │   ├── 圆周运动生成                                     │
+│  │   ├── 力反馈PD控制                                     │
+│  │   └── 能量罐安全监控                                   │
+│  │                                                      │
+│  ├── force_sensor_reader (C++)                          │
+│  │   ├── 串口数据读取 (921600 baud)                       │
+│  │   ├── 数据解析与校验                                   │
+│  │   ├── EMA滤波 + 异常检测                              │
+│  │   └── ROS消息发布 (100Hz)                             │
+│  │                                                      │
+│  └── franka_control_node (C++)                          │
+│      ├── libfranka接口封装                               │
+│      ├── 硬件状态监控                                     │
+│      └── 控制器管理器集成                                │
+├─────────────────────────────────────────────────────────┤
+│                  Hardware Layer                         │
+├─────────────────────────────────────────────────────────┤
+│  Franka Panda/FR3        │  M8128 Force Sensor          │
+│  ├── 7-DOF协作机械臂       │  ├── 6轴力/力矩测量             │
+│  ├── 实时以太网控制         │  ├── USB串口通信               │
+│  ├── 关节力矩传感器         │  ├── 1kHz采样率                │
+│  └── IP: 172.16.0.2      │  └── IEEE 754浮点数据格式       │
+└─────────────────────────────────────────────────────────┘
+```
+
+---
+
+## 5. 关键技术特点
+
+### 5.1 实时性能
+- **控制周期**: 1kHz (1ms) 机械臂控制循环  
+- **力传感器**: 1kHz采样，100Hz ROS发布
+- **实时内核**: RT Linux保证时间确定性
+
+### 5.2 安全机制
+- **能量罐监控**: 防止机械臂碰撞损坏
+- **力限制检测**: 异常力值自动保护停止
+- **软件限位**: z轴运动范围严格限制
+- **数据校验**: 多层数据有效性检查
+
+### 5.3 控制精度
+- **位置精度**: 亚毫米级圆周运动
+- **力控精度**: 0.05N死区，PD控制器调节
+- **时间同步**: ROS时间戳精确同步
+
+---
+
+## 6. 移植指南要点
+
+### 6.1 硬件依赖
+- **机械臂**: 必须支持libfranka接口的Franka机械臂
+- **力传感器**: 兼容M8128协议的6轴力传感器  
+- **通信**: 以太网(机械臂) + USB串口(力传感器)
+- **系统**: 实时Linux内核 + ROS1环境
+
+### 6.2 软件依赖
+- **核心库**: libfranka, franka_ros, serial库
+- **ROS包**: controller_manager, hardware_interface
+- **Python**: matplotlib, numpy (可视化)
+
+### 6.3 配置要点
+- **IP地址**: 机械臂网络配置
+- **串口设备**: 力传感器USB设备路径
+- **控制参数**: PD增益、运动参数调节
+- **安全参数**: 力限制、位置限制设置
+
+---
+
+**文档版本**: v1.0  
+**创建日期**: 2025-01-08  
+**适用系统**: franka_ros + M8128力传感器集成系统

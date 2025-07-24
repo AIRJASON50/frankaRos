@@ -1,0 +1,25 @@
+<library path="lib/libunified_ds_controller">
+  
+  <!-- 统一DS控制器 - 第一阶段实现 -->
+  <class name="franka_ds/UnifiedDSController" 
+         type="franka_ds::UnifiedDSController" 
+         base_class_type="controller_interface::ControllerBase">
+    <description>
+      统一DS控制器 - 基于动力学系统的速度控制
+      
+      核心特性：
+      - 纯速度控制，无位置积分
+      - 自动扰动恢复能力  
+      - 能量罐无源性保证
+      - 参数化配置，避免硬编码
+      - 与现有节点兼容
+      
+      相比传统PD控制的优势：
+      - 响应速度提升：无需10秒等待，立即启动力反馈控制
+      - 控制精度提升：直接速度调制比间接位置控制更准确
+      - 鲁棒性提升：扰动后自动恢复，无需重规划
+      - 理论保证：DS全局渐近稳定性，能量罐无源性保证
+    </description>
+  </class>
+  
+</library> 

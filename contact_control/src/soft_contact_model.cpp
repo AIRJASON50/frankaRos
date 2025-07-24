@@ -1,0 +1,517 @@
+/**
+ * @file soft_contact_model.cpp
+ * @brief 软接触模型实现，用于模拟机器人末端与软表面接触时的力学行为
+ *
+ * @架构：
+ * - SoftContactModel类：实现基于赫兹接触理论的软接触模型
+ * - ContactVisualizer类：提供接触信息的可视化功能
+ *
+ * @数据流：
+ * 输入：机器人末端位置、速度、方向 -> 
+ * 处理：计算接触状态、接触深度、法向力、摩擦力 -> 
+ * 输出：接触力和可视化标记（ROS消息）
+ *
+ * @概述：
+ * 1. 使用赫兹接触理论计算接触力，考虑材料弹性模量和泊松比
+ * 2. 实现库仑摩擦模型计算摩擦力
+ * 3. 提供接触力和接触点可视化功能
+ * 4. 支持接触状态检测和深度计算
+ */
+#include <contact_control/soft_contact_model.h>
+
+#include <cmath>
+#include <Eigen/Geometry>
+#include <std_msgs/ColorRGBA.h>
+
+namespace contact_control {
+
+SoftContactModel::SoftContactModel(ros::NodeHandle& node_handle, const ContactParams& params)
+    : node_handle_(node_handle), params_(params), last_state_() {
+  
+  // 初始化ROS发布者
+  marker_pub_ = node_handle_.advertise<visualization_msgs::MarkerArray>(
+      "contact_markers", 1);
+  wrench_pub_ = node_handle_.advertise<geometry_msgs::WrenchStamped>(
+      "contact_force", 1);
+      
+  // 添加理论力发布者，用于rqt绘图
+  theoretical_force_pub_ = node_handle_.advertise<geometry_msgs::WrenchStamped>(
+      "theoretical_force", 1);
+      
+  // 初始化消息
+  wrench_msg_.header.frame_id = "world";
+  theoretical_force_msg_.header.frame_id = "world";
+  
+  // 初始化可视化标记
+  markers_.markers.resize(3);
+  
+  // 接触点标记
+  auto& contact_marker = markers_.markers[0];
+  contact_marker.header.frame_id = "world";
+  contact_marker.ns = "contact";
+  contact_marker.id = 0;
+  contact_marker.type = visualization_msgs::Marker::SPHERE;
+  contact_marker.action = visualization_msgs::Marker::ADD;
+  contact_marker.scale.x = 0.02;
+  contact_marker.scale.y = 0.02;
+  contact_marker.scale.z = 0.02;
+  contact_marker.color.r = 1.0;
+  contact_marker.color.g = 0.0;
+  contact_marker.color.b = 0.0;
+  contact_marker.color.a = 1.0;
+  
+  // 接触力标记
+  auto& force_marker = markers_.markers[1];
+  force_marker.header.frame_id = "world";
+  force_marker.ns = "force";
+  force_marker.id = 1;
+  force_marker.type = visualization_msgs::Marker::ARROW;
+  force_marker.action = visualization_msgs::Marker::ADD;
+  force_marker.scale.x = 0.01;  // 箭头柄直径
+  force_marker.scale.y = 0.02;  // 箭头头部直径
+  force_marker.color.r = 0.0;
+  force_marker.color.g = 1.0;
+  force_marker.color.b = 0.0;
+  force_marker.color.a = 1.0;
+  
+  // 接触深度文本标记
+  auto& text_marker = markers_.markers[2];
+  text_marker.header.frame_id = "world";
+  text_marker.ns = "depth_text";
+  text_marker.id = 2;
+  text_marker.type = visualization_msgs::Marker::TEXT_VIEW_FACING;
+  text_marker.action = visualization_msgs::Marker::ADD;
+  text_marker.scale.z = 0.05;  // 文本高度
+  text_marker.color.r = 1.0;
+  text_marker.color.g = 1.0;
+  text_marker.color.b = 1.0;
+  text_marker.color.a = 1.0;
+  
+  // 设置标记的生存时间为1秒
+  for (auto& marker : markers_.markers) {
+    marker.lifetime = ros::Duration(1.0);
+  }
+  
+  ROS_INFO("SoftContactModel initialized with parameters (based on paper):");
+  ROS_INFO("  Young's modulus: %.2f Pa", params_.young_modulus);
+  ROS_INFO("  Poisson ratio: %.2f", params_.poisson_ratio);
+  ROS_INFO("  Friction coefficient: %.2f", params_.friction_coef);
+  ROS_INFO("  Contact radius (probe): %.3f m", params_.contact_radius);
+  ROS_INFO("  Path radius: %.3f m", params_.path_radius);
+  ROS_INFO("  Damping: %.2f Ns/m", params_.damping);
+  ROS_INFO("  Force threshold: %.2f N", params_.force_threshold);
+  ROS_INFO("  Depth threshold: %.3f m", params_.depth_threshold);
+}
+
+ContactState SoftContactModel::updateContact(
+    const Eigen::Vector3d& position,
+    const Eigen::Vector3d& velocity,
+    const Eigen::Quaterniond& orientation,
+    double soft_surface_height) {
+  
+  ContactState state;
+  
+  // 软体表面位置
+  Eigen::Vector3d surface_point(position[0], position[1], soft_surface_height);
+  
+  // 计算接触深度（z方向）- 正值表示接触，负值表示无接触
+  double depth = soft_surface_height - position[2];
+  
+  // 记录状态更新信息
+  static int debug_counter = 0;
+  
+  // 判断是否接触（使用更宽松的条件以提高灵敏度）
+  if (depth > params_.depth_threshold * 0.5) {
+    // 确认接触状态
+    state.in_contact = true;
+    state.contact_depth = depth;
+    state.contact_position = position;
+    
+    // 获取接触法向量 - 根据接触表面法线方向（默认垂直向上）
+    state.contact_normal = Eigen::Vector3d(0, 0, 1);
+    
+    // 根据赫兹接触理论计算接触力
+    Eigen::Vector3d normal_force = computeContactForce(depth, state.contact_normal);
+    double normal_force_mag = normal_force.norm();
+    state.contact_force = normal_force_mag;
+    
+    // 计算接触刚度（赫兹接触的非线性刚度）
+    state.effective_stiffness = computeContactStiffness(depth);
+    
+    // 保证最小接触力 - 提高接触稳定性
+    if (normal_force_mag < 0.1) {
+      // 设置一个最小的接触力，确保接触力不为零
+      double min_force = 0.1; 
+      state.contact_force = min_force;
+      normal_force = min_force * state.contact_normal;
+    }
+    
+    // 计算切向速度 - 用于计算摩擦力
+    Eigen::Vector3d tangential_velocity = velocity;
+    tangential_velocity -= velocity.dot(state.contact_normal) * state.contact_normal;
+    
+    // 计算摩擦力 - 使用Coulomb模型
+    state.friction_force = computeFrictionForce(normal_force_mag, tangential_velocity);
+    
+    // 每100次更新输出一次调试信息
+    if (debug_counter++ % 100 == 0) {
+      ROS_DEBUG_STREAM("接触深度: " << depth * 1000.0 << " mm, 接触力: " << normal_force_mag 
+          << " N, 切向速度: " << tangential_velocity.norm() << " m/s");
+    }
+    
+    // 发布接触信息 - 用于可视化
+    publishContactMarkers(state);
+    publishContactForce(normal_force + state.friction_force, state.contact_position);
+  } else {
+    // 未接触状态
+    state.in_contact = false;
+    state.contact_depth = 0.0;
+    state.contact_force = 0.0;
+    state.effective_stiffness = 0.0;
+    state.contact_normal = Eigen::Vector3d(0, 0, 1);
+    state.contact_position = position;
+    state.friction_force = Eigen::Vector3d::Zero();
+    
+    // 每100次更新输出一次调试信息
+    if (debug_counter++ % 100 == 0) {
+      ROS_DEBUG_STREAM("未接触，距离表面: " << -depth * 1000.0 << " mm");
+    }
+  }
+  
+  // 保存状态，用于下次更新参考
+  last_state_ = state;
+  
+  return state;
+}
+
+Eigen::Vector3d SoftContactModel::computeContactForce(double depth, const Eigen::Vector3d& normal) {
+  if (depth <= 0) {
+    return Eigen::Vector3d::Zero();
+  }
+  
+  // 根据论文公式计算组合弹性模量：1/E = (1-ν₁²)/E₁ + (1-ν₂²)/E₂
+  // 其中 E₁, ν₁ 是探头材料（钢），E₂, ν₂ 是软块材料
+  double probe_term = (1.0 - params_.probe_poisson_ratio * params_.probe_poisson_ratio) / params_.probe_young_modulus;
+  double soft_term = (1.0 - params_.poisson_ratio * params_.poisson_ratio) / params_.young_modulus;
+  double combined_modulus = 1.0 / (probe_term + soft_term);
+  
+  // 由于探头模量远大于软块模量，简化为论文中的近似：E ≈ E₂/(1-ν₂²)
+  // 但我们使用完整公式以确保精度
+  
+  // 根据论文Hertz接触理论：F = (4/3) * E* * √R * d^(3/2)
+  // 其中 d 是深度，R 是接触半径，E* 是有效弹性模量
+  double probe_radius = params_.contact_radius;  // 探头半径R
+  
+  // 计算弹性力 (Hertz接触理论)
+  double elastic_force = (4.0 / 3.0) * combined_modulus * 
+                        std::sqrt(probe_radius) * 
+                        std::pow(depth, 1.5);
+  
+  // Hunt-Crossley阻尼模型 (论文中的粘弹性模型)
+  // F_damping = damping_coefficient * depth^n * depth_rate
+  static double last_depth = 0.0;
+  static ros::Time last_time = ros::Time::now();
+  
+  ros::Time current_time = ros::Time::now();
+  double dt = (current_time - last_time).toSec();
+  
+  double damping_force = 0.0;
+  if (dt > 1e-6) {  // 避免除零错误
+    double depth_rate = (depth - last_depth) / dt;
+    
+    // Hunt-Crossley阻尼：damping与depth^1.5成比例
+    if (depth_rate > 0) {  // 仅在压缩时应用阻尼
+      damping_force = params_.damping * std::pow(depth, 1.5) * depth_rate;
+    }
+    }
+    
+  // 总法向力 = 弹性力 + 阻尼力
+  double total_force = elastic_force + damping_force;
+    
+  // 计算接触面积半径 (论文公式: a = sqrt(R*d))
+  double contact_area_radius = std::sqrt(probe_radius * depth);
+  
+  // 记录理论力用于对比
+  theoretical_force_ = total_force;
+  
+  // 发布理论力数据
+  publishTheoreticalForce(total_force * normal);
+  
+  // 更新状态
+    last_depth = depth;
+    last_time = current_time;
+    
+  // 确保力不为负
+  total_force = std::max(0.0, total_force);
+    
+  return total_force * normal;
+}
+
+Eigen::Vector3d SoftContactModel::computeFrictionForce(
+    double normal_force, 
+    const Eigen::Vector3d& tangential_velocity) {
+  
+  // 切向速度的大小
+  double vel_magnitude = tangential_velocity.norm();
+  
+  if (vel_magnitude < 1e-6) {
+    // 切向速度太小，返回零摩擦力
+    return Eigen::Vector3d::Zero();
+  }
+  
+  // 根据论文公式计算摩擦力：
+  // F_f = μ * F_z * [1 + (2ν - 1) * 3a²/(10R²)] * n_e + k_d * v_e
+  // 其中 a = sqrt(R*d) 是接触面积半径
+  
+  double probe_radius = params_.contact_radius;
+  double poisson_ratio = params_.poisson_ratio;
+  
+  // 计算接触面积半径 (需要当前深度信息)
+  // 这里简化处理，使用一个估计值
+  double estimated_depth = 0.001;  // 估计接触深度为1mm
+  double contact_area_radius = std::sqrt(probe_radius * estimated_depth);
+  
+  // 计算修正的摩擦系数 (论文公式)
+  double modified_friction_coef = params_.friction_coef * 
+    (1.0 + (2.0 * poisson_ratio - 1.0) * 3.0 * contact_area_radius * contact_area_radius / 
+     (10.0 * probe_radius * probe_radius));
+  
+  // 库仑摩擦力
+  double friction_magnitude = modified_friction_coef * normal_force;
+  
+  // 摩擦力方向与速度相反
+  Eigen::Vector3d friction_direction = -tangential_velocity / vel_magnitude;
+  
+  // 添加速度阻尼项 (论文中的k_d * v_e项)
+  Eigen::Vector3d velocity_damping = -params_.damping * 0.1 * tangential_velocity;  // 较小的阻尼系数
+  
+  return friction_magnitude * friction_direction + velocity_damping;
+}
+
+void SoftContactModel::publishContactMarkers(const ContactState& state) {
+  ros::Time now = ros::Time::now();
+  
+  // 更新所有标记的时间戳
+  for (auto& marker : markers_.markers) {
+    marker.header.stamp = now;
+  }
+  
+  if (state.in_contact) {
+    // 接触点标记
+    auto& contact_marker = markers_.markers[0];
+    contact_marker.pose.position.x = state.contact_position.x();
+    contact_marker.pose.position.y = state.contact_position.y();
+    contact_marker.pose.position.z = state.contact_position.z();
+    
+    // 接触力标记（箭头）
+    auto& force_marker = markers_.markers[1];
+    force_marker.points.resize(2);
+    
+    // 箭头起点（接触点）
+    force_marker.points[0].x = state.contact_position.x();
+    force_marker.points[0].y = state.contact_position.y();
+    force_marker.points[0].z = state.contact_position.z();
+    
+    // 计算箭头终点（与接触力成比例）
+    double arrow_scale = 0.02;  // 缩放因子，使箭头长度适合可视化
+    Eigen::Vector3d force_end = state.contact_position + 
+                               arrow_scale * state.contact_force * state.contact_normal;
+    force_marker.points[1].x = force_end.x();
+    force_marker.points[1].y = force_end.y();
+    force_marker.points[1].z = force_end.z();
+    
+    // 接触深度文本标记
+    auto& text_marker = markers_.markers[2];
+    text_marker.pose.position.x = state.contact_position.x() + 0.1;
+    text_marker.pose.position.y = state.contact_position.y();
+    text_marker.pose.position.z = state.contact_position.z() + 0.1;
+    
+    char buffer[50];
+    std::snprintf(buffer, sizeof(buffer), "Depth: %.3f mm\nForce: %.2f N", 
+                 state.contact_depth * 1000.0, state.contact_force);
+    text_marker.text = buffer;
+    
+    // 设置标记可见
+    for (auto& marker : markers_.markers) {
+      marker.action = visualization_msgs::Marker::ADD;
+    }
+  } else {
+    // 未接触时隐藏标记
+    for (auto& marker : markers_.markers) {
+      marker.action = visualization_msgs::Marker::DELETE;
+    }
+  }
+  
+  // 发布标记
+  marker_pub_.publish(markers_);
+}
+
+void SoftContactModel::publishContactForce(
+    const Eigen::Vector3d& force, 
+    const Eigen::Vector3d& contact_point) {
+  
+  wrench_msg_.header.stamp = ros::Time::now();
+  
+  // 填充力数据
+  wrench_msg_.wrench.force.x = force.x();
+  wrench_msg_.wrench.force.y = force.y();
+  wrench_msg_.wrench.force.z = force.z();
+  
+  // 力矩设为零（简化模型）
+  wrench_msg_.wrench.torque.x = 0.0;
+  wrench_msg_.wrench.torque.y = 0.0;
+  wrench_msg_.wrench.torque.z = 0.0;
+  
+  // 发布力消息
+  wrench_pub_.publish(wrench_msg_);
+}
+
+void SoftContactModel::publishTheoreticalForce(const Eigen::Vector3d& theoretical_force) {
+  theoretical_force_msg_.header.stamp = ros::Time::now();
+  
+  // 填充理论力数据
+  theoretical_force_msg_.wrench.force.x = theoretical_force.x();
+  theoretical_force_msg_.wrench.force.y = theoretical_force.y();
+  theoretical_force_msg_.wrench.force.z = theoretical_force.z();
+  
+  // 力矩设为零
+  theoretical_force_msg_.wrench.torque.x = 0.0;
+  theoretical_force_msg_.wrench.torque.y = 0.0;
+  theoretical_force_msg_.wrench.torque.z = 0.0;
+  
+  // 发布理论力消息
+  theoretical_force_pub_.publish(theoretical_force_msg_);
+}
+
+double SoftContactModel::computeEffectiveModulus() const {
+  // 根据论文公式计算组合弹性模量：1/E = (1-ν₁²)/E₁ + (1-ν₂²)/E₂
+  // 其中 E₁, ν₁ 是探头材料（钢），E₂, ν₂ 是软块材料
+  double probe_term = (1.0 - params_.probe_poisson_ratio * params_.probe_poisson_ratio) / params_.probe_young_modulus;
+  double soft_term = (1.0 - params_.poisson_ratio * params_.poisson_ratio) / params_.young_modulus;
+  return 1.0 / (probe_term + soft_term);
+}
+
+double SoftContactModel::computeContactStiffness(double depth) const {
+  if (depth <= 0) {
+    return 0.0;
+  }
+  
+  // 接触刚度是接触力对深度的导数
+  // K = dF/dδ = 2 * E* * sqrt(R) * sqrt(δ)
+  double effective_modulus = computeEffectiveModulus();
+  return 2.0 * effective_modulus * std::sqrt(params_.contact_radius) * std::sqrt(depth);
+}
+
+/**
+ * @brief 根据接触深度计算理论正压力
+ * 
+ * @param depth 接触深度 (m)
+ * @return 计算得到的理论正压力 (N)
+ */
+double SoftContactModel::computeNormalForce(double depth) {
+  if (depth <= 0) {
+    return 0.0;
+  }
+  
+  // 根据论文公式：F = (4/3) * E_effective * sqrt(R) * depth^(3/2)
+  // E_effective = E / (1-v^2)，其中E是杨氏模量，v是泊松比
+  double effective_modulus = params_.young_modulus / (1 - std::pow(params_.poisson_ratio, 2));
+  
+  // 计算弹性力
+  double elastic_force = (4.0 / 3.0) * effective_modulus * 
+                        std::sqrt(params_.contact_radius) * 
+                        std::pow(depth, 1.5);
+  
+  // 力不应为负值（仅在挤压方向存在力）
+  return std::max(0.0, elastic_force);
+}
+
+// 实现ContactVisualizer类的方法
+ContactVisualizer::ContactVisualizer(ros::NodeHandle& nh, const std::string& frame_id)
+    : frame_id_(frame_id) {
+  marker_pub_ = nh.advertise<visualization_msgs::MarkerArray>("contact_markers", 1);
+}
+
+void ContactVisualizer::publishContactMarker(const Eigen::Vector3d& position, 
+                                           const Eigen::Vector3d& force, 
+                                           double depth) {
+  // 创建标记数组
+  visualization_msgs::MarkerArray markers;
+  markers.markers.resize(3);
+  
+  // 接触点标记
+  auto& contact_marker = markers.markers[0];
+  contact_marker.header.frame_id = frame_id_;
+  contact_marker.header.stamp = ros::Time::now();
+  contact_marker.ns = "contact";
+  contact_marker.id = 0;
+  contact_marker.type = visualization_msgs::Marker::SPHERE;
+  contact_marker.action = visualization_msgs::Marker::ADD;
+  contact_marker.pose.position.x = position.x();
+  contact_marker.pose.position.y = position.y();
+  contact_marker.pose.position.z = position.z();
+  contact_marker.scale.x = 0.02;
+  contact_marker.scale.y = 0.02;
+  contact_marker.scale.z = 0.02;
+  contact_marker.color.r = 1.0;
+  contact_marker.color.g = 0.0;
+  contact_marker.color.b = 0.0;
+  contact_marker.color.a = 1.0;
+  
+  // 接触力标记（箭头）
+  auto& force_marker = markers.markers[1];
+  force_marker.header.frame_id = frame_id_;
+  force_marker.header.stamp = ros::Time::now();
+  force_marker.ns = "force";
+  force_marker.id = 1;
+  force_marker.type = visualization_msgs::Marker::ARROW;
+  force_marker.action = visualization_msgs::Marker::ADD;
+  force_marker.points.resize(2);
+  
+  // 箭头起点
+  force_marker.points[0].x = position.x();
+  force_marker.points[0].y = position.y();
+  force_marker.points[0].z = position.z();
+  
+  // 箭头终点
+  double arrow_scale = 0.02;  // 缩放因子
+  Eigen::Vector3d force_end = position + arrow_scale * force;
+  force_marker.points[1].x = force_end.x();
+  force_marker.points[1].y = force_end.y();
+  force_marker.points[1].z = force_end.z();
+  
+  force_marker.scale.x = 0.01;  // 箭头柄直径
+  force_marker.scale.y = 0.02;  // 箭头头部直径
+  force_marker.color.r = 0.0;
+  force_marker.color.g = 1.0;
+  force_marker.color.b = 0.0;
+  force_marker.color.a = 1.0;
+  
+  // 接触深度文本标记
+  auto& text_marker = markers.markers[2];
+  text_marker.header.frame_id = frame_id_;
+  text_marker.header.stamp = ros::Time::now();
+  text_marker.ns = "depth_text";
+  text_marker.id = 2;
+  text_marker.type = visualization_msgs::Marker::TEXT_VIEW_FACING;
+  text_marker.action = visualization_msgs::Marker::ADD;
+  text_marker.pose.position.x = position.x() + 0.1;
+  text_marker.pose.position.y = position.y();
+  text_marker.pose.position.z = position.z() + 0.1;
+  text_marker.scale.z = 0.05;  // 文本高度
+  
+  char buffer[50];
+  std::snprintf(buffer, sizeof(buffer), "Depth: %.3f mm\nForce: %.2f N", 
+               depth * 1000.0, force.norm());
+  text_marker.text = buffer;
+  
+  text_marker.color.r = 1.0;
+  text_marker.color.g = 1.0;
+  text_marker.color.b = 1.0;
+  text_marker.color.a = 1.0;
+  
+  // 发布标记
+  marker_pub_.publish(markers);
+}
+
+}  // namespace contact_control

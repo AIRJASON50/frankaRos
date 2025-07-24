@@ -33,22 +33,6 @@ cartesian_velocity_example_controller:
     type: franka_example_controllers/CartesianVelocityExampleController
     arm_id: $(arg arm_id)
 
-model_example_controller:
-    type: franka_example_controllers/ModelExampleController
-    arm_id: $(arg arm_id)
-
-force_example_controller:
-    type: franka_example_controllers/ForceExampleController
-    arm_id: $(arg arm_id)
-    joint_names:
-        - $(arg arm_id)_joint1
-        - $(arg arm_id)_joint2
-        - $(arg arm_id)_joint3
-        - $(arg arm_id)_joint4
-        - $(arg arm_id)_joint5
-        - $(arg arm_id)_joint6
-        - $(arg arm_id)_joint7
-
 joint_impedance_example_controller:
     type: franka_example_controllers/JointImpedanceExampleController
     arm_id: $(arg arm_id)
@@ -155,29 +139,3 @@ teleop_joint_pd_example_controller:
        ddq_max_lower: [0.8, 0.8, 0.8, 0.8, 10.0, 10.0, 10.0] # [rad/s^2]
        ddq_max_upper: [6.0, 6.0, 6.0, 6.0, 15.0, 20.0, 20.0] # [rad/s^2]
        contact_force_threshold: 5.0 # [N]
-
-circle_controller:
-    type: franka_example_controllers/CircleController
-    arm_id: $(arg arm_id)
-    joint_names:
-        - $(arg arm_id)_joint1
-        - $(arg arm_id)_joint2
-        - $(arg arm_id)_joint3
-        - $(arg arm_id)_joint4
-        - $(arg arm_id)_joint5
-        - $(arg arm_id)_joint6
-        - $(arg arm_id)_joint7
-    circle_radius: 0.1  # 圆周半径（米）
-    circle_frequency: 0.5  # 圆周运动频率（Hz）
-
-contact_controller:
-    type: franka_example_controllers/ContactController
-    arm_id: $(arg arm_id)
-    joint_names:
-        - $(arg arm_id)_joint1
-        - $(arg arm_id)_joint2
-        - $(arg arm_id)_joint3
-        - $(arg arm_id)_joint4
-        - $(arg arm_id)_joint5
-        - $(arg arm_id)_joint6
-        - $(arg arm_id)_joint7

@@ -1,0 +1,7 @@
+<library path="lib/libcontact_control">
+  <class name="contact_control/ContactController" type="contact_control::ContactController" base_class_type="controller_interface::ControllerBase">
+      <description>
+          A controller that implements force sensor calibration and contact control for probe-based interaction tasks. Features multi-stage control including calibration, approach, contact detection, and depth control phases.
+      </description>
+  </class>
+</library> 

@@ -1,0 +1,53 @@
+<?xml version="1.0"?>
+<launch>
+  <arg name="robot_ip" default="172.16.0.2" />
+  <arg name="arm_id" default="fr3" />
+  <arg name="load_gripper" default="false" />
+
+  <!-- 设置更宽松的碰撞阈值以支持接触交互 -->
+  <rosparam param="/franka_control/collision_config">
+    # 关节力矩阈值 [Nm]
+    lower_torque_thresholds_acceleration: [20.0, 20.0, 18.0, 18.0, 16.0, 14.0, 12.0]
+    upper_torque_thresholds_acceleration: [20.0, 20.0, 18.0, 18.0, 16.0, 14.0, 12.0]
+    lower_torque_thresholds_nominal: [20.0, 20.0, 18.0, 18.0, 16.0, 14.0, 12.0]
+    upper_torque_thresholds_nominal: [20.0, 20.0, 18.0, 18.0, 16.0, 14.0, 12.0]
+    
+    # 笛卡尔力/力矩阈值 [N, N, N, Nm, Nm, Nm]
+    lower_force_thresholds_acceleration: [20.0, 20.0, 20.0, 25.0, 25.0, 25.0]
+    upper_force_thresholds_acceleration: [20.0, 20.0, 20.0, 25.0, 25.0, 25.0]
+    lower_force_thresholds_nominal: [20.0, 20.0, 20.0, 25.0, 25.0, 25.0]
+    upper_force_thresholds_nominal: [20.0, 20.0, 20.0, 25.0, 25.0, 25.0]
+  </rosparam>
+
+  <!-- 启动Franka控制节点 -->
+  <include file="$(find franka_control)/launch/franka_control.launch">
+    <arg name="robot_ip" value="$(arg robot_ip)" />
+    <arg name="load_gripper" value="$(arg load_gripper)" />
+    <arg name="robot" value="fr3" />
+  </include>
+
+  <!-- 加载DS-阻抗控制器参数 -->
+  <rosparam file="$(find franka_ds)/config/unified_ds_params.yaml" command="load" ns="unified_ds_controller"/>
+  
+  <!-- 加载控制器配置 -->
+  <rosparam file="$(find franka_ds)/config/unified_ds_controller.yaml" command="load"/>
+
+  <!-- 启动控制器 -->
+  <node name="controller_spawner" pkg="controller_manager" type="spawner" respawn="false" output="screen"
+        args="unified_ds_controller"/>
+
+  <!-- 启动力传感器读取节点 -->
+  <node name="force_sensor_reader" pkg="contact_control" type="contact_force_sensor_read" output="screen"/>
+
+  <!-- 启动力传感器可视化节点 -->
+  <node name="force_sensor_visualizer" pkg="franka_ds" type="force_sensor_visualizer.py" output="screen"/>
+
+  <!-- 启动RViz可视化 -->
+  <node name="rviz_unified_ds" pkg="rviz" type="rviz" output="screen" 
+        args="-d $(find franka_ds)/launch/robot.rviz"/>
+
+  <!-- 显示控制器状态信息 -->
+  <node name="ds_info_display" pkg="rostopic" type="rostopic" 
+        args="echo /unified_ds/control_status" output="screen"/>
+
+</launch> 

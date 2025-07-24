@@ -1,0 +1,46 @@
+# DS-阻抗控制器参数配置
+# Unified DS-Impedance Controller Parameters
+
+# 目标位置 [x, y, z] (米)
+target_position: [0.5, 0.0, 0.3]
+
+# DS参数
+linear_lambda: 2.0              # 线性DS收敛速率 [1/s]
+linear_max_velocity: 0.05       # 线性DS最大速度 [m/s]
+circular_radius: 0.05           # 圆形DS半径 [m]
+circular_omega: 0.5             # 圆形DS角速度 [rad/s]
+exploration_speed: 0.01         # 探测下降速度 [m/s]
+
+# 阻抗参数
+cartesian_stiffness_pos: [300.0, 300.0, 300.0]    # 笛卡尔位置刚度 [N/m]
+cartesian_stiffness_ori: [30.0, 30.0, 30.0]       # 笛卡尔方向刚度 [Nm/rad]
+# 注意：阻尼参数会自动计算为临界阻尼 (2*sqrt(stiffness))
+
+nullspace_stiffness: 20.0       # 零空间刚度 [Nm/rad]
+
+# 接触检测参数
+contact_force_threshold: 0.5    # 接触力阈值 [N]
+max_contact_force: 10.0         # 最大接触力 [N]
+
+# 能量罐参数
+energy_tank_max: 4.0            # 能量罐最大容量 [J]
+
+# 安全参数
+max_velocity: 0.1               # 最大速度限制 [m/s]
+max_acceleration: 0.5           # 最大加速度限制 [m/s²]
+velocity_safety_factor: 0.5     # 速度安全系数
+
+# 加速阶段参数
+acceleration_duration: 3.0      # 加速持续时间 [s]
+
+# ROS话题配置
+ros_topics:
+  user_command: "/unified_ds/user_command"
+  force_sensor: "/force_sensor/filtered_data"
+  control_status: "/unified_ds/control_status"
+  energy_status: "/unified_ds/energy_status"
+  velocity_debug: "/unified_ds/ds_velocity"
+
+# 调试参数
+publish_debug_info: true
+debug_print_rate: 200           # 每200个周期打印一次调试信息 
