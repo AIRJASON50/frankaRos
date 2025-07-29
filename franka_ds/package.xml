@@ -31,5 +31,6 @@
   <export>
     <!-- 控制器插件 -->
     <controller_interface plugin="${prefix}/unified_ds_plugin.xml" />
+    <controller_interface plugin="${prefix}/force_guided_plugin.xml" />
   </export>
 </package> 

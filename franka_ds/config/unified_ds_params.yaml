@@ -1,46 +1,65 @@
-# DS-阻抗控制器参数配置
-# Unified DS-Impedance Controller Parameters
+# ========== DS统一控制器参数配置文件 ==========
+# 此文件包含所有DS阻抗控制器的关键参数
 
-# 目标位置 [x, y, z] (米)
-target_position: [0.5, 0.0, 0.3]
+# ========== 控制流程参数 ==========
+acceleration_duration: 3.0        # 加速阶段持续时间 [s] - 控制器启动后的缓慢加速时间，避免突然运动
+approach_gain: 2.0                # 接近运动增益 [1/s] - 控制机器人向目标吸引子收敛的速度，值越大收敛越快
+blend_distance: 0.1               # 运动模式混合距离阈值 [m] - 距离吸引子多远开始从接近运动切换到圆周运动
 
-# DS参数
-linear_lambda: 2.0              # 线性DS收敛速率 [1/s]
-linear_max_velocity: 0.05       # 线性DS最大速度 [m/s]
-circular_radius: 0.05           # 圆形DS半径 [m]
-circular_omega: 0.5             # 圆形DS角速度 [rad/s]
-exploration_speed: 0.01         # 探测下降速度 [m/s]
+# ========== 笛卡尔阻抗参数 ==========
+# 这些参数控制机器人在笛卡尔空间的刚度和阻尼特性
+cartesian_stiffness_ori:          # 姿态刚度矩阵对角线元素 [Nm/rad]
+- 30.0                            # 绕X轴旋转刚度 - 控制末端执行器姿态保持能力
+- 30.0                            # 绕Y轴旋转刚度 - 值过大会使姿态过于僵硬
+- 30.0                            # 绕Z轴旋转刚度 - 值过小会导致姿态不稳定
+cartesian_stiffness_pos:          # 位置刚度矩阵对角线元素 [N/m]
+- 300.0                           # X方向位置刚度 - 控制位置跟踪精度
+- 300.0                           # Y方向位置刚度 - 值过大会使运动过于僵硬
+- 300.0                           # Z方向位置刚度 - 值过小会导致位置误差
 
-# 阻抗参数
-cartesian_stiffness_pos: [300.0, 300.0, 300.0]    # 笛卡尔位置刚度 [N/m]
-cartesian_stiffness_ori: [30.0, 30.0, 30.0]       # 笛卡尔方向刚度 [Nm/rad]
-# 注意：阻尼参数会自动计算为临界阻尼 (2*sqrt(stiffness))
+# ========== 圆周运动DS参数 ==========
+circular_radius: 0.025             # 圆周运动半径 [m] - 机器人绕吸引子做圆周运动的半径，建议范围0.01-0.1
+constant_tangential_speed: 0.05    # 固定切向速度 [m/s] - 圆周运动的线速度，影响运动流畅性
 
-nullspace_stiffness: 20.0       # 零空间刚度 [Nm/rad]
+# ========== 接触检测与力控制参数 ==========
+contact_force_threshold: 2.0      # 接触力检测阈值 [N] - 避免误触发
+contact_surface_height: 0.185 # 接触面高度 [m] - 期望的接触面Z坐标，由set_attractor_position.py自动设置
+desired_normal_force: 2.0         # 期望法向接触力 [N] - 接触时希望施加的垂直力，建议3.0-10.0
+filtered_force_gain: 0.9          # 力传感器滤波增益 [0-1] - 0.9表示强滤波
+force_modulation_gain: 1.0        # 力调制增益gamma_p - 建议0.5-2.0
 
-# 接触检测参数
-contact_force_threshold: 0.5    # 接触力阈值 [N]
-max_contact_force: 10.0         # 最大接触力 [N]
+# ========== DS核心控制参数 ==========
+ds_damping_gain: 25.0             # DS阻尼增益 [N*s/m] - 控制速度阻尼，值越大运动越平稳但响应变慢
+ds_impedance_gain: 170.0          # DS阻抗增益d1 [N*s/m] - 核心参数！控制DS速度场强度，影响跟踪性能
+exploration_speed: 0.01           # 探索速度 [m/s] - 用于探测阶段的下降速度
+linear_lambda: 2.0                # 线性DS收敛因子 [1/s] - 控制线性接近的收敛速度
+linear_max_velocity: 0.15         # 线性DS最大速度 [m/s] - 从0.05提升到0.15，接近原版DS的0.25
 
-# 能量罐参数
-energy_tank_max: 4.0            # 能量罐最大容量 [J]
+# ========== 能量罐参数 ==========
+energy_tank_max: 40.0             # 能量罐最大容量 [J] - 从4.0提升到20.0，接近原版DS的60J，提升柔顺性
 
-# 安全参数
-max_velocity: 0.1               # 最大速度限制 [m/s]
-max_acceleration: 0.5           # 最大加速度限制 [m/s²]
-velocity_safety_factor: 0.5     # 速度安全系数
+# ========== 安全限制参数 ==========
+max_acceleration: 0.5             # 最大加速度限制 [m/s²] - 防止剧烈运动的安全保护
+max_contact_force: 10.0           # 最大接触力 [N] - 接触力上限，超过会触发保护
+max_joint_torque: 15.0            # 每个关节最大力矩 [Nm] - 关节力矩安全限制
+max_orientation_torque: 15.0      # 最大姿态控制力矩 [Nm] - 姿态控制力矩上限
+max_velocity: 0.1                 # 全局最大速度限制 [m/s] - 所有运动的速度上限，建议0.1-0.3
+min_velocity: 0.01                # 最小速度阈值 [m/s] - 防止运动停滞的最小速度
 
-# 加速阶段参数
-acceleration_duration: 3.0      # 加速持续时间 [s]
+# ========== 零空间控制参数 ==========
+nullspace_stiffness: 20.0         # 零空间刚度 [Nm/rad] - 控制关节回到初始姿态的强度
 
-# ROS话题配置
-ros_topics:
-  user_command: "/unified_ds/user_command"
-  force_sensor: "/force_sensor/filtered_data"
-  control_status: "/unified_ds/control_status"
-  energy_status: "/unified_ds/energy_status"
-  velocity_debug: "/unified_ds/ds_velocity"
+# ========== 姿态控制参数 ==========
+orientation_damping: 15.0         # 姿态阻尼 [Nm*s/rad] - 姿态控制的阻尼系数
+orientation_stiffness: 50.0       # 姿态刚度 [Nm/rad] - 保持末端执行器垂直的刚度
 
-# 调试参数
-publish_debug_info: true
-debug_print_rate: 200           # 每200个周期打印一次调试信息 
+# ========== 运动质量参数 ==========
+radial_gain: 3.0                  # 径向收缩增益 [1/s] - 控制向目标半径收敛的速度
+velocity_safety_factor: 1         # 速度安全系数 - 整体速度的缩放因子，0.5表示减半
+
+# ========== 目标位置配置 ==========
+# 由set_attractor_position.py脚本自动设置，无需手动修改
+target_position:                  # 目标吸引子位置 [m]
+- 0.4551259910313041             # X坐标
+- 0.10602150095204013            # Y坐标  
+- 0.185             # Z坐标（与contact_surface_height应保持一致）

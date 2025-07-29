@@ -36,3 +36,4 @@
     <controller_interface plugin="${prefix}/contact_control_plugin.xml" />
   </export>
 </package>
+ 

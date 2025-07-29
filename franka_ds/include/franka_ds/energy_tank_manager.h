@@ -44,6 +44,7 @@ class EnergyTankManager {
                          const Eigen::Matrix3d& damping_matrix,
                          double desired_force,
                          const Eigen::Vector3d& surface_normal,
+                         double la,  // 添加la参数
                          double dt);
   
   /**
@@ -154,8 +155,8 @@ class EnergyTankManager {
 
  private:
   // ========== 能量罐状态变量 ==========
-  double s_;                    // 当前能量水平 [J]
   double s_max_;                // 最大能量容量 [J]
+  double s_;                    // 当前能量水平 [J]
   double power_flow_;           // 当前功率流 [W]
   
   // ========== 功率项 ==========
@@ -223,9 +224,9 @@ class EnergyTankManager {
   static constexpr double DEFAULT_BETA = 1.0;              // 默认β系数
   static constexpr double DEFAULT_GAMMA = 1.0;             // 默认γ系数
   static constexpr double DEFAULT_GAMMA_P = 10.0;          // 默认γ_p增益
-  static constexpr double DEFAULT_D1 = 1.0;                // 默认DS-阻抗增益
-  static constexpr double ENERGY_EPSILON = 1e-6;           // 能量数值精度
-  static constexpr double MIN_SAFE_ENERGY_RATIO = 0.1;     // 最小安全能量比例
+  static constexpr double DEFAULT_D1 = 150.0;                // 默认DS-阻抗增益
+  static constexpr double ENERGY_EPSILON = 1e-3;           // 能量接近0的阈值 [J]
+  static constexpr double MIN_SAFE_ENERGY_RATIO = 0.2;     // 最小安全能量比例 (20%)
 };
 
 }  // namespace franka_ds 

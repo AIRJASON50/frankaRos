@@ -1,0 +1,35 @@
+# Force Guided Controller Parameters
+# 力引导控制器参数配置
+
+# 控制器标识
+arm_id: "fr3"
+joint_names:
+  - fr3_joint1
+  - fr3_joint2
+  - fr3_joint3
+  - fr3_joint4
+  - fr3_joint5
+  - fr3_joint6
+  - fr3_joint7
+
+# 被动顺应性参数
+translational_stiffness: 50.0    # 降低刚度，增加顺应性 [N/m]
+translational_damping: 10.0      # 降低阻尼 [N*s/m]
+
+# 注意：不再使用姿态控制参数，机械臂姿态完全自由
+
+# 安全参数
+max_joint_torque: 12.0            # 最大关节力矩 [Nm]
+delta_tau_max: 1.0                # 最大力矩变化率 [Nm]
+
+# 滤波参数
+filter_params: 0.01               # 位置滤波系数（被动模式下基本不用）
+
+# 吸引子位置（用于位置记录和设置）
+attractor_position: [0.5, 0.0, 0.2]  # 默认位置 [m]
+contact_surface_height: 0.18           # 接触面高度 [m]
+
+# 力感知参数（保留用于将来扩展）
+force_threshold: 2.0              # 力阈值 [N]
+force_gain: 0.01                  # 力增益 [m/(N*s)]
+max_force_velocity: 0.1           # 最大力速度 [m/s] 

@@ -93,8 +93,31 @@ class UnifiedDSController : public controller_interface::MultiInterfaceControlle
     double linear_lambda_;                // 线性DS收敛速率 [1/s]
     double linear_max_velocity_;          // 线性DS最大速度 [m/s]
     double circular_radius_;              // 圆形DS半径 [m]
-    double circular_omega_;               // 圆形DS角速度 [rad/s]
+    // circular_omega_ 已删除 - 代码中实际使用 constant_tangential_speed_
     double exploration_speed_;            // 探测下降速度 [m/s]
+    
+    // DS控制核心参数
+    double ds_impedance_gain_;            // DS阻抗控制增益 d1 [N*s/m]
+    double ds_damping_gain_;              // DS阻尼增益 [N*s/m]
+    double approach_gain_;                // 接近运动增益
+    double radial_gain_;                  // 径向收缩增益
+    double constant_tangential_speed_;    // 固定切向速度 [m/s]
+    double blend_distance_;               // 运动模式混合距离阈值 [m]
+    double min_velocity_;                 // 最小速度阈值 [m/s]
+    
+    // 姿态控制参数
+    double orientation_stiffness_;        // 姿态控制刚度 [Nm/rad]
+    double orientation_damping_;          // 姿态控制阻尼 [Nm*s/rad]
+    double max_orientation_torque_;       // 最大姿态控制力矩 [Nm]
+    
+    // 接触力控制参数
+    double desired_normal_force_;         // 期望法向接触力 [N]
+    double contact_surface_height_;       // 接触面高度 [m] - 用于接触检测和力控制
+    double filtered_force_gain_;          // 力传感器滤波增益 [0-1] - 修复：添加可配置滤波参数
+    double force_modulation_gain_;        // 力调制增益 γ_p - 修复：添加gamma_p参数，用于力调制计算
+    
+    // 安全力矩限制
+    double max_joint_torque_;             // 每个关节最大安全力矩 [Nm]
     
     // 阻抗参数
     Eigen::Matrix3d cartesian_stiffness_pos_;  // 笛卡尔位置刚度 [N/m]
@@ -117,6 +140,15 @@ class UnifiedDSController : public controller_interface::MultiInterfaceControlle
     
     // 加速阶段参数
     double acceleration_duration_;        // 加速阶段持续时间 [s]
+
+    double gamma_;           // 标量调节函数 γ
+    double gamma_p_;         // 力调制增益 γ_p
+    double d1_;              // DS-阻抗增益 d1
+
+    bool is_enabled_;        // 能量罐是否启用
+    bool is_initialized_;    // 能量罐是否已初始化
+
+    // *** 添加：常量定义，使其更适应Frankas和DS理论 ***
   };
 
   // ========== Core Control Functions ==========
@@ -150,6 +182,22 @@ class UnifiedDSController : public controller_interface::MultiInterfaceControlle
    * @brief 计算圆形DS速度场
    */
   Eigen::Vector3d computeCircularDS(const Eigen::Vector3d& current_position);
+  
+  /**
+   * @brief 计算力调制速度场项 - DS统一力运动生成的核心
+   * 按照论文公式：fn(x) = Fd(x)/d1 * n(x)
+   * @param current_position 当前末端执行器位置
+   * @return 力调制速度场项 [m/s]
+   */
+  Eigen::Vector3d computeForceModulation(const Eigen::Vector3d& current_position);
+  
+  /**
+   * @brief 计算期望接触力（动态调整）
+   * 参考原版DS动态力生成逻辑
+   * @param current_position 当前末端执行器位置  
+   * @return 期望接触力 [N]
+   */
+  double computeDesiredContactForce(const Eigen::Vector3d& current_position);
   
   /**
    * @brief 计算探测DS速度场
@@ -212,6 +260,16 @@ class UnifiedDSController : public controller_interface::MultiInterfaceControlle
   Eigen::Vector3d contact_force_;
   double baseline_force_z_;
   bool force_sensor_calibrated_;
+  
+  // *** 修复：性能优化 - 预分配临时变量避免频繁内存分配 ***
+  // 预分配的Eigen对象，在update函数中重复使用
+  mutable Eigen::Affine3d transform_cache_;
+  mutable Eigen::Vector3d position_cache_;
+  mutable Eigen::Quaterniond orientation_cache_;
+  mutable Vector6d cartesian_velocity_cache_;
+  mutable Eigen::Vector3d nominal_ds_velocity_cache_;
+  mutable Eigen::Vector3d constrained_velocity_cache_;
+  mutable Vector7d tau_d_cache_;
   
   // Energy tank management
   std::unique_ptr<EnergyTankManager> energy_tank_manager_;

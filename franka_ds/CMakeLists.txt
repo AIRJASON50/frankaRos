@@ -28,7 +28,7 @@ endif()
 # Configure catkin package
 catkin_package(
   INCLUDE_DIRS include
-  LIBRARIES franka_ds_core unified_ds_controller
+  LIBRARIES franka_ds_core unified_ds_controller force_guided_controller
   CATKIN_DEPENDS
     controller_interface
     franka_hw
@@ -89,8 +89,27 @@ target_include_directories(unified_ds_controller SYSTEM PUBLIC
   ${catkin_INCLUDE_DIRS}
 )
 
+# ========== Force Guided Controller ==========
+
+# Force guided controller
+add_library(force_guided_controller
+  src/force_guided_controller.cpp
+)
+
+target_link_libraries(force_guided_controller
+  franka_ds_core
+  ${Franka_LIBRARIES}
+  ${catkin_LIBRARIES}
+)
+
+target_include_directories(force_guided_controller SYSTEM PUBLIC
+  ${Franka_INCLUDE_DIRS}
+  ${EIGEN3_INCLUDE_DIRS}
+  ${catkin_INCLUDE_DIRS}
+)
+
 # Installation
-install(TARGETS franka_ds_core unified_ds_controller
+install(TARGETS franka_ds_core unified_ds_controller force_guided_controller
   ARCHIVE DESTINATION ${CATKIN_PACKAGE_LIB_DESTINATION}
   LIBRARY DESTINATION ${CATKIN_PACKAGE_LIB_DESTINATION}
   RUNTIME DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
@@ -104,6 +123,6 @@ install(DIRECTORY launch config scripts
   DESTINATION ${CATKIN_PACKAGE_SHARE_DESTINATION}
 )
 
-install(FILES unified_ds_plugin.xml
+install(FILES unified_ds_plugin.xml force_guided_plugin.xml
   DESTINATION ${CATKIN_PACKAGE_SHARE_DESTINATION}
 ) 

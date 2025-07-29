@@ -36,6 +36,10 @@ class ForceSensorVisualizer:
         }
         self.value_labels = {}
         
+        # *** 添加：能量罐数据缓存 ***
+        self.energy_buffer = deque()  # 存储能量罐时间序列数据
+        self.energy_threshold = 5.0  # 能量阈值，从外部参数读取
+        
         # Zero offset storage
         self.zero_offsets = {'Fx': 0, 'Fy': 0, 'Fz': 0, 'Mx': 0, 'My': 0, 'Mz': 0}
         self.is_zeroing = True
@@ -54,6 +58,7 @@ class ForceSensorVisualizer:
         # DS controller status
         self.control_phase = "CALIBRATION"
         self.energy_level = 0.0
+        self.energy_max = 20.0  # 从外部参数读取的最大能量容量
         self.controller_status = "Initializing..."
         
         # Create GUI
@@ -64,8 +69,11 @@ class ForceSensorVisualizer:
         
         # Subscribe to DS controller topics
         rospy.Subscriber('/unified_ds/control_phase', String, self.phase_callback)
-        rospy.Subscriber('/unified_ds/energy_tank', Float64, self.energy_callback)
+        rospy.Subscriber('/unified_ds/energy_tank', Float64, self.energy_tank_callback)  # 统一使用这个回调
         rospy.Subscriber('/unified_ds/status', String, self.status_callback)
+        
+        # 从ROS参数服务器读取能量罐配置
+        self.load_energy_tank_params()
         
         # Command publisher
         self.command_pub = rospy.Publisher('/unified_ds/user_command', String, queue_size=1)
@@ -164,10 +172,11 @@ class ForceSensorVisualizer:
         plot_frame.grid_rowconfigure(0, weight=1)
         plot_frame.grid_columnconfigure(0, weight=1)
         
-        # Create figure and axes
-        self.fig = plt.Figure(figsize=(10, 8), dpi=100)
-        self.ax_force = self.fig.add_subplot(211)  # Forces plot
-        self.ax_torque = self.fig.add_subplot(212)  # Torques plot
+        # Create figure and axes - 修改为3个子图
+        self.fig = plt.Figure(figsize=(10, 12), dpi=100)  # 增加高度以容纳第三个图
+        self.ax_force = self.fig.add_subplot(311)   # Forces plot (顶部)
+        self.ax_torque = self.fig.add_subplot(312)  # Torques plot (中间)
+        self.ax_energy = self.fig.add_subplot(313)  # Energy Tank plot (底部)
         
         # Configure canvas
         self.canvas = FigureCanvasTkAgg(self.fig, master=plot_frame)
@@ -213,9 +222,34 @@ class ForceSensorVisualizer:
     def phase_callback(self, msg):
         self.control_phase = msg.data
     
-    def energy_callback(self, msg):
-        self.energy_level = msg.data
+    def energy_tank_callback(self, msg):
+        """能量罐状态回调函数"""
+        with self.data_lock:
+            current_time = rospy.Time.now().to_sec()
+            # 添加时间戳和能量值到缓存
+            self.energy_buffer.append((current_time, msg.data))
+            
+            # 保持时间窗口内的数据
+            cutoff_time = current_time - self.time_window_seconds
+            while self.energy_buffer and self.energy_buffer[0][0] < cutoff_time:
+                self.energy_buffer.popleft()
+                
+            # 更新当前能量值
+            self.energy_level = msg.data
     
+    def load_energy_tank_params(self):
+        """从ROS参数服务器加载能量罐配置"""
+        try:
+            # 读取能量罐最大容量
+            self.energy_max = rospy.get_param('/unified_ds_controller/energy_tank_max', 20.0)
+            # 设置阈值为最大容量的25%
+            self.energy_threshold = self.energy_max * 0.25
+            rospy.loginfo(f"Energy tank params loaded: max={self.energy_max}J, threshold={self.energy_threshold}J")
+        except Exception as e:
+            rospy.logwarn(f"Failed to load energy tank params: {e}, using defaults")
+            self.energy_max = 20.0
+            self.energy_threshold = 5.0
+
     def status_callback(self, msg):
         self.controller_status = msg.data
         if msg.data == "CALIBRATION_COMPLETE":
@@ -276,13 +310,18 @@ class ForceSensorVisualizer:
             # Update plots
             self.ax_force.clear()
             self.ax_torque.clear()
+            self.ax_energy.clear() # Clear the new energy plot
             self.ax_force.grid(True, alpha=0.4)
             self.ax_torque.grid(True, alpha=0.4)
+            self.ax_energy.grid(True, alpha=0.4) # Add grid for energy plot
             self.ax_force.set_title('Forces', fontsize=12, fontweight='bold')
             self.ax_force.set_ylabel('Force (N)', fontsize=10)
             self.ax_torque.set_title('Torques', fontsize=12, fontweight='bold')
             self.ax_torque.set_xlabel('Time (s)', fontsize=10)
             self.ax_torque.set_ylabel('Torque (Nm)', fontsize=10)
+            self.ax_energy.set_title('Energy Tank', fontsize=12, fontweight='bold')
+            self.ax_energy.set_xlabel('Time (s)', fontsize=10)
+            self.ax_energy.set_ylabel('Energy (J)', fontsize=10)
 
             force_colors = {'Fx': 'r', 'Fy': 'g', 'Fz': 'b'}
             torque_colors = {'Mx': 'r', 'My': 'g', 'Mz': 'b'}
@@ -298,10 +337,68 @@ class ForceSensorVisualizer:
                     elif key in torque_colors:
                         self.ax_torque.plot(relative_times, values, color=torque_colors[key], label=key)
             
+            # *** 添加：能量罐绘图逻辑 ***
+            if self.energy_buffer:
+                energy_times, energy_values = zip(*self.energy_buffer)
+                relative_energy_times = [t - current_time for t in energy_times]
+                
+                # 绘制能量曲线
+                self.ax_energy.plot(relative_energy_times, energy_values, 'blue', linewidth=2, label='Energy Level')
+                
+                # 绘制最大容量线
+                self.ax_energy.axhline(y=self.energy_max, color='green', linestyle='--', linewidth=1, label=f'Max Capacity ({self.energy_max:.1f}J)')
+                
+                # 绘制阈值警告线
+                self.ax_energy.axhline(y=self.energy_threshold, color='orange', linestyle='--', linewidth=1, label=f'Warning Threshold ({self.energy_threshold:.1f}J)')
+                
+                # 绘制低能量危险线（10%最大容量）
+                danger_threshold = self.energy_max * 0.1
+                self.ax_energy.axhline(y=danger_threshold, color='red', linestyle='--', linewidth=1, label=f'Danger ({danger_threshold:.1f}J)')
+                
+                # 设置Y轴范围
+                self.ax_energy.set_ylim(0, self.energy_max * 1.1)
+                
+                # 能量状态提示
+                current_energy = energy_values[-1] if energy_values else 0
+                if current_energy < danger_threshold:
+                    # 危险状态：红色背景
+                    self.ax_energy.axhspan(0, danger_threshold, alpha=0.2, color='red')
+                    status_text = 'DANGER: Low Energy!'
+                    status_color = 'red'
+                elif current_energy < self.energy_threshold:
+                    # 警告状态：橙色背景
+                    self.ax_energy.axhspan(danger_threshold, self.energy_threshold, alpha=0.2, color='orange')
+                    status_text = 'WARNING: Energy Low'
+                    status_color = 'orange'
+                else:
+                    # 正常状态：绿色背景
+                    self.ax_energy.axhspan(self.energy_threshold, self.energy_max, alpha=0.1, color='green')
+                    status_text = 'Normal'
+                    status_color = 'green'
+                
+                # 在图表上显示当前状态
+                self.ax_energy.text(0.02, 0.95, f'Status: {status_text}', 
+                                  transform=self.ax_energy.transAxes, 
+                                  fontsize=10, fontweight='bold',
+                                  color=status_color,
+                                  bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
+                
+                # 显示当前能量百分比
+                energy_percentage = (current_energy / self.energy_max) * 100
+                self.ax_energy.text(0.02, 0.85, f'Energy: {current_energy:.2f}J ({energy_percentage:.1f}%)', 
+                                  transform=self.ax_energy.transAxes, 
+                                  fontsize=9,
+                                  bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
+            
+            # 添加图例
             self.ax_force.legend(loc='upper left')
             self.ax_torque.legend(loc='upper left')
+            self.ax_energy.legend(loc='upper right')  # 能量罐图例
+            
+            # 设置X轴范围
             self.ax_force.set_xlim(-self.time_window_seconds, 0)
             self.ax_torque.set_xlim(-self.time_window_seconds, 0)
+            self.ax_energy.set_xlim(-self.time_window_seconds, 0)
 
         self.canvas.draw()
         self.root.after(50, self.update_gui_and_plot) # ~20 Hz GUI refresh
@@ -344,7 +441,10 @@ class ForceSensorVisualizer:
         with self.data_lock:
             for buffer in self.data_buffers.values():
                 buffer.clear()
-        
+            # *** 添加：清除能量罐数据 ***
+            self.energy_buffer.clear()
+        rospy.loginfo("All plot data cleared.")
+
     def on_closing(self):
         rospy.loginfo("Shutting down Force Sensor Visualizer")
         self.root.quit()

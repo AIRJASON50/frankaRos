@@ -1,7 +1,11 @@
-<?xml version="1.0"?>
+<!-- Force Guided Controller Launch File -->
+<!-- 力引导控制器启动文件 -->
 <launch>
+  <!-- 参数配置 -->
   <arg name="robot_ip" default="172.16.0.2" />
   <arg name="arm_id" default="fr3" />
+  <arg name="controller" default="force_guided_controller" />
+  <arg name="rviz" default="true" />
   <arg name="load_gripper" default="false" />
 
   <!-- 设置更宽松的碰撞阈值以支持接触交互 -->
@@ -26,32 +30,23 @@
     <arg name="robot" value="fr3" />
   </include>
 
-  <!-- 加载DS-阻抗控制器参数 - 修复命名空间问题 -->
-  <!-- 方法1: 将参数加载到控制器管理器的命名空间下 -->
-  <rosparam file="$(find franka_ds)/config/unified_ds_params.yaml" command="load" ns="unified_ds_controller"/>
-  
-  <!-- 方法2: 同时也加载到根命名空间，供脚本使用 -->
-  <rosparam file="$(find franka_ds)/config/unified_ds_params.yaml" command="load"/>
-  
-  <!-- 加载控制器配置 -->
-  <rosparam file="$(find franka_ds)/config/unified_ds_controller.yaml" command="load"/>
-
-  <!-- 启动控制器 -->
-  <node name="controller_spawner" pkg="controller_manager" type="spawner" respawn="false" output="screen"
-        args="unified_ds_controller"/>
-
-  <!-- 启动力传感器读取节点 -->
+  <!-- 力传感器读取节点 -->
   <node name="force_sensor_reader" pkg="contact_control" type="contact_force_sensor_read" output="screen"/>
 
-  <!-- 启动力传感器可视化节点 -->
-  <node name="force_sensor_visualizer" pkg="franka_ds" type="force_sensor_visualizer.py" output="screen"/>
+  <!-- 力引导控制器配置 -->
+  <rosparam command="load" file="$(find franka_ds)/config/force_guided_controller.yaml" ns="$(arg controller)" />
+  <param name="$(arg controller)/arm_id" value="$(arg arm_id)" />
+  <param name="$(arg controller)/type" value="franka_ds/ForceGuidedController" />
 
-  <!-- 启动RViz可视化 -->
-  <node name="rviz_unified_ds" pkg="rviz" type="rviz" output="screen" 
-        args="-d $(find franka_ds)/launch/robot.rviz"/>
+  <!-- 启动控制器管理器 -->
+  <node name="controller_spawner" pkg="controller_manager" type="spawner" respawn="false" output="screen"
+        args="$(arg controller)" />
 
-  <!-- 显示控制器状态信息 -->
-  <node name="ds_info_display" pkg="rostopic" type="rostopic" 
-        args="echo /unified_ds/control_status" output="screen"/>
+  <!-- RViz可视化 -->
+  <node name="rviz" pkg="rviz" type="rviz" output="screen" 
+        args="-d $(find franka_ds)/launch/robot.rviz" if="$(arg rviz)" />
+
+  <!-- 信息显示节点 -->
+  <node name="force_guided_info_display" pkg="franka_ds" type="force_guided_info_display.py" output="screen" />
 
 </launch> 

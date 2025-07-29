@@ -1,0 +1,15 @@
+<library path="lib/libforce_guided_controller">
+  <class name="franka_ds/ForceGuidedController" 
+         type="franka_ds::ForceGuidedController" 
+         base_class_type="controller_interface::ControllerBase">
+    <description>
+      Force Guided Controller for Franka Robot
+      
+      Features:
+      - Maintains end-effector vertical orientation
+      - Force-guided position control
+      - Compliant interaction with environment
+      - Configurable attractor and contact surface height
+    </description>
+  </class>
+</library> 
