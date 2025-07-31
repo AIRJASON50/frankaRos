@@ -81,17 +81,13 @@ bool UnifiedDSController::init(hardware_interface::RobotHW* robot_hw, ros::NodeH
   ROS_INFO_STREAM("EnergyTankManager initialized: Max energy=" << ds_impedance_params_.energy_tank_max_ 
                   << "J, Initial energy=" << energy_tank_manager_->getCurrentEnergy() << "J");
   
-  // 初始化机器人状态管理器
-  // robot_state_manager_ = std::make_unique<DSRobotState>(); // Removed as per edit hint
-  
   // 初始化ROS接口
   initializeROSInterface(controller_nh);
   ROS_INFO("ROS interface initialized");
   
-  // 初始化控制状态
-  current_phase_ = ControlPhase::CALIBRATION;
-  user_start_command_received_ = false;
-  force_sensor_calibrated_ = false;
+  // 初始化控制状态 - 简化为两个状态
+  is_calibrated_ = false;
+  motion_started_ = false;
   debug_print_counter_ = 0;
   
   // 初始化力传感器相关变量
@@ -125,18 +121,18 @@ void UnifiedDSController::starting(const ros::Time& time) {
   // 保存初始关节位置
   initial_joint_positions_ = initial_state.q;
   
-  // 设置目标位置 - 使用配置文件中的正确目标位置
-  target_position_ = ds_impedance_params_.target_position;  // 使用配置文件中的目标位置
-  target_orientation_ = initial_orientation_; // 保持初始方向
+  // 设置目标位置
+  target_position_ = ds_impedance_params_.target_position;
+  target_orientation_ = initial_orientation_;
   
-  // 初始化控制状态
-  current_phase_ = ControlPhase::CALIBRATION;
+  // 初始化状态
+  is_calibrated_ = false;
+  motion_started_ = false;
   controller_start_time_ = time;
-  phase_start_time_ = time;
   
-  ROS_INFO("DS-Impedance Controller ready, waiting for initialization");
-  ROS_INFO_STREAM("Initial position: [" << initial_position_.transpose() << "], distance to target: " 
-                  << (target_position_ - initial_position_).norm() << " m");
+  ROS_INFO("DS-Impedance Controller ready, starting calibration...");
+  ROS_INFO_STREAM("Initial position: [" << initial_position_.transpose() << "], target position: [" 
+                  << target_position_.transpose() << "], distance: " << (target_position_ - initial_position_).norm() << " m");
 }
 
 void UnifiedDSController::update(const ros::Time& time, const ros::Duration& period) {
@@ -156,63 +152,61 @@ void UnifiedDSController::update(const ros::Time& time, const ros::Duration& per
   Eigen::Map<Vector7d> dq(robot_state.dq.data());
   Eigen::Map<Vector7d> tau_J_d(robot_state.tau_J_d.data());
   
-  // 获取当前末端执行器状态 - 使用预分配的缓存变量避免频繁分配
+  // 获取当前末端执行器状态 - 使用预分配的缓存变量
   transform_cache_ = Eigen::Affine3d(Eigen::Matrix4d::Map(robot_state.O_T_EE.data()));
   position_cache_ = transform_cache_.translation();
   orientation_cache_ = Eigen::Quaterniond(transform_cache_.rotation());
   
-  // 计算当前笛卡尔速度 - 使用预分配的缓存变量
+  // 计算当前笛卡尔速度
   cartesian_velocity_cache_ = jacobian * dq;
   
-  // 更新控制阶段
-  updateControlPhase(time.toSec(), position_cache_, external_force_);
+  // 简化的状态管理
+  updateSimpleControlState(time.toSec(), position_cache_, external_force_);
   
-  // 计算DS调制的期望速度 - 使用缓存的位置
-  nominal_ds_velocity_cache_ = computeDSModulatedVelocity(position_cache_);
-  
-  // *** 计算la (调制增益) - 参照 SurfacePolishing.cpp::computeModulatedDS ***
-  double d1 = ds_impedance_params_.ds_impedance_gain_;
-  double gammap = ds_impedance_params_.force_modulation_gain_;
-  double desired_force = computeDesiredContactForce(position_cache_);
-  Eigen::Vector3d surface_normal(0.0, 0.0, 1.0); // 表面法向量
-
-  double delta_val = std::pow(2.0 * surface_normal.dot(nominal_ds_velocity_cache_) * gammap * desired_force / d1, 2.0) +
-                     4.0 * std::pow(nominal_ds_velocity_cache_.norm(), 4.0);
-  
-  double la;
-  if (std::abs(nominal_ds_velocity_cache_.norm()) < 1e-6) {
-    la = 0.0;
+  // 计算期望速度
+  if (!is_calibrated_ || !motion_started_) {
+    // 校准阶段或等待启动：零速度
+    nominal_ds_velocity_cache_ = Eigen::Vector3d::Zero();
   } else {
-    la = (-2.0 * surface_normal.dot(nominal_ds_velocity_cache_) * gammap * desired_force / d1 + std::sqrt(delta_val)) /
-         (2.0 * std::pow(nominal_ds_velocity_cache_.norm(), 2.0));
+    // 运动阶段：统一速度场（接近场 + 力调制）
+    nominal_ds_velocity_cache_ = computeUnifiedDS(position_cache_);
   }
-
-  // 如果能量过低且标称功率为负 (表示DS在消耗能量，帮助能量罐恢复)，则 la = 1.0
-  // 这部分逻辑在 energy_tank_manager.cpp::updateScalarFunctions 中通过 beta 进行调整
-  // 这里保持 la 的原始计算，让 energy_tank_manager 负责最终的无源性保障
-
+  
   // 能量罐管理和无源性约束
   constrained_velocity_cache_ = nominal_ds_velocity_cache_;
-  if (current_phase_ != ControlPhase::CALIBRATION && current_phase_ != ControlPhase::INITIALIZATION) {
-    // *** 修复：能量罐力功率计算 ***
-    // 使用真实的期望接触力，而不是恒定的0
-    Eigen::Matrix3d damping_matrix = ds_impedance_params_.cartesian_damping_pos_;
-    // double desired_force = computeDesiredContactForce(position_cache_);  // 已在上面计算
-    // Eigen::Vector3d surface_normal = Eigen::Vector3d::UnitZ(); // 已在上面定义
+  if (is_calibrated_ && motion_started_) {
+    // 计算la (调制增益) - 参照 SurfacePolishing.cpp
+    double d1 = ds_impedance_params_.ds_impedance_gain_;
+    double gammap = ds_impedance_params_.force_modulation_gain_;
+    double desired_force = computeDesiredContactForce(position_cache_);
+    Eigen::Vector3d surface_normal(0.0, 0.0, 1.0);
+
+    double delta_val = std::pow(2.0 * surface_normal.dot(nominal_ds_velocity_cache_) * gammap * desired_force / d1, 2.0) +
+                       4.0 * std::pow(nominal_ds_velocity_cache_.norm(), 4.0);
     
+    double la;
+    if (std::abs(nominal_ds_velocity_cache_.norm()) < 1e-6) {
+      la = 0.0;
+    } else {
+      la = (-2.0 * surface_normal.dot(nominal_ds_velocity_cache_) * gammap * desired_force / d1 + std::sqrt(delta_val)) /
+           (2.0 * std::pow(nominal_ds_velocity_cache_.norm(), 2.0));
+    }
+
+    // 能量罐动力学更新
+    Eigen::Matrix3d damping_matrix = ds_impedance_params_.cartesian_damping_pos_;
     energy_tank_manager_->updateTankDynamics(cartesian_velocity_cache_.head(3), 
                                             nominal_ds_velocity_cache_,
                                             damping_matrix,
-                                            desired_force,  // 不再恒为0
+                                            desired_force,
                                             surface_normal,
-                                            la, // 传递la参数
+                                            la,
                                             period.toSec());
     
     // 应用无源性约束
     constrained_velocity_cache_ = energy_tank_manager_->constrainVelocity(nominal_ds_velocity_cache_);
   }
   
-  // 计算阻抗控制力矩 - 使用缓存变量
+  // 计算阻抗控制力矩
   tau_d_cache_ = computeImpedanceControl(constrained_velocity_cache_,
                                          transform_cache_,
                                          cartesian_velocity_cache_,
@@ -224,8 +218,8 @@ void UnifiedDSController::update(const ros::Time& time, const ros::Duration& per
   // 限制力矩变化率
   tau_d_cache_ = saturateTorqueRate(tau_d_cache_, tau_J_d);
   
-  // 添加安全力矩限制，防止触发机器人安全反射
-  const double MAX_JOINT_TORQUE = ds_impedance_params_.max_joint_torque_;  // 使用配置的关节力矩限制
+  // 安全力矩限制
+  const double MAX_JOINT_TORQUE = ds_impedance_params_.max_joint_torque_;
   for (size_t i = 0; i < 7; ++i) {
     tau_d_cache_(i) = std::max(-MAX_JOINT_TORQUE, std::min(MAX_JOINT_TORQUE, tau_d_cache_(i)));
   }
@@ -235,24 +229,29 @@ void UnifiedDSController::update(const ros::Time& time, const ros::Duration& per
     joint_handles_[i].setCommand(tau_d_cache_(i));
   }
   
-  // 发布状态信息
-  if (debug_print_counter_++ % kDebugPrintRate == 0) {
+  // 发布状态信息 (修复：改回200Hz中的500次打印，即约2Hz频率)
+  if (debug_print_counter_++ % 500 == 0) {
     publishControlStatus();
     publishEnergyStatus();
     
-    // 详细调试输出
-    ROS_INFO_STREAM("=== DS Controller Debug Info ===");
-    ROS_INFO_STREAM("Phase: " << static_cast<int>(current_phase_) 
-                    << " (" << (current_phase_ == ControlPhase::CIRCULAR_MOTION ? "CIRCULAR_MOTION" : 
-                               current_phase_ == ControlPhase::ACCELERATION ? "ACCELERATION" : "OTHER") << ")");
-    ROS_INFO_STREAM("Position: [" << position_cache_.transpose() << "]");
-    ROS_INFO_STREAM("Target: [" << target_position_.transpose() << "]");
-    ROS_INFO_STREAM("Distance to target: " << (target_position_ - position_cache_).norm() << " m");
-    ROS_INFO_STREAM("Nominal DS velocity: [" << nominal_ds_velocity_cache_.transpose() << "], norm: " << nominal_ds_velocity_cache_.norm());
-    ROS_INFO_STREAM("Constrained velocity: [" << constrained_velocity_cache_.transpose() << "], norm: " << constrained_velocity_cache_.norm());
-    ROS_INFO_STREAM("Current velocity: [" << cartesian_velocity_cache_.head(3).transpose() << "], norm: " << cartesian_velocity_cache_.head(3).norm());
-    ROS_INFO_STREAM("Torque command norm: " << tau_d_cache_.norm() << " Nm");
-    ROS_INFO_STREAM("================================");
+    // 简化的状态输出（2Hz频率）
+    if (!is_calibrated_) {
+      ROS_INFO("=== Force Sensor Calibration in Progress ===");
+    } else if (!motion_started_) {
+      ROS_INFO("=== Ready to Start - Waiting for User Command ===");
+      ROS_INFO_STREAM("Calibration complete, current position: [" << position_cache_.transpose() << "]");
+    } else {
+      // 只在运动状态时显示详细信息
+      ROS_INFO_STREAM("=== Motion Active ===");
+      ROS_INFO_STREAM("Position: [" << position_cache_.transpose() << "]");
+      ROS_INFO_STREAM("Target: [" << target_position_.transpose() << "]");
+      ROS_INFO_STREAM("Distance: " << (target_position_ - position_cache_).norm() << " m");
+      ROS_INFO_STREAM("DS velocity norm: " << nominal_ds_velocity_cache_.norm() << " m/s");
+      ROS_INFO_STREAM("DS velocity: [" << nominal_ds_velocity_cache_.transpose() << "] m/s");
+      ROS_INFO_STREAM("Actual velocity norm: " << cartesian_velocity_cache_.head(3).norm() << " m/s");
+      ROS_INFO_STREAM("Energy tank: " << energy_tank_manager_->getCurrentEnergy() << "/" << ds_impedance_params_.energy_tank_max_ << " J");
+      ROS_INFO_STREAM("===================");
+    }
   }
 }
 
@@ -265,75 +264,224 @@ void UnifiedDSController::stopping(const ros::Time& time) {
   }
 }
 
-Eigen::Vector3d UnifiedDSController::computeDSModulatedVelocity(const Eigen::Vector3d& current_position) {
-  switch (current_phase_) {
-    case ControlPhase::CALIBRATION:
-    case ControlPhase::INITIALIZATION:
-      return Eigen::Vector3d::Zero();
-      
-    case ControlPhase::ACCELERATION: {
-      // 加速阶段：从零速度逐渐增加到圆周DS速度（不是线性DS）
-      double acceleration_time = (ros::Time::now() - phase_start_time_).toSec();
-      double progress = std::min(acceleration_time / ds_impedance_params_.acceleration_duration_, 1.0);
-      
-      // 计算标称DS速度和力调制项
-      Eigen::Vector3d nominal_ds = computeCircularDS(current_position);
-      Eigen::Vector3d force_modulated_ds = computeForceModulation(current_position);
-      
-      // 统一的DS速度场：f(x) + fn(x)
-      Eigen::Vector3d unified_ds = nominal_ds + force_modulated_ds;
-      
-      return progress * unified_ds;
-    }
-    
-    case ControlPhase::LINEAR_APPROACH: {
-      // 此阶段现在被跳过，直接在加速后进入圆周运动
-      current_phase_ = ControlPhase::CIRCULAR_MOTION;
-      phase_start_time_ = ros::Time::now();
-      ROS_INFO("Switching to CIRCULAR_MOTION phase");
-      
-      // 返回统一的DS速度场
-      Eigen::Vector3d nominal_ds = computeCircularDS(current_position);
-      Eigen::Vector3d force_modulated_ds = computeForceModulation(current_position);
-      return nominal_ds + force_modulated_ds;
-    }
-    
-    case ControlPhase::PROBE_DESCENT: {
-      // 此阶段现在被跳过，直接进入圆周运动
-      current_phase_ = ControlPhase::CIRCULAR_MOTION;
-      phase_start_time_ = ros::Time::now();
-      ROS_INFO("Switching to CIRCULAR_MOTION phase");
-      
-      // 返回统一的DS速度场
-      Eigen::Vector3d nominal_ds = computeCircularDS(current_position);
-      Eigen::Vector3d force_modulated_ds = computeForceModulation(current_position);
-      return nominal_ds + force_modulated_ds;
-    }
-    
-    case ControlPhase::CIRCULAR_MOTION: {
-      // *** 核心修复：DS统一力-运动生成 ***
-      // 按照论文公式：x˙d = f(x) + fn(x)
-      // 其中 f(x) 是标称DS，fn(x) 是力调制项
-      
-      Eigen::Vector3d nominal_ds = computeCircularDS(current_position);
-      Eigen::Vector3d force_modulated_ds = computeForceModulation(current_position);
-      
-      // 统一的DS速度场
-      return nominal_ds + force_modulated_ds;
-    }
-    
-    default:
-      return Eigen::Vector3d::Zero();
+// 新的统一速度场计算函数
+Eigen::Vector3d UnifiedDSController::computeUnifiedDS(const Eigen::Vector3d& current_position) {
+  // 统一速度场 = 接近场 + 力调制
+  // 不再区分圆周运动和线性接近，而是根据位置自动混合
+  
+  // 1. 计算基础接近/圆周混合速度场
+  Eigen::Vector3d base_velocity = computeBaseVelocityField(current_position);
+  
+  // 2. 计算力调制项
+  Eigen::Vector3d force_modulation = computeForceModulation(current_position);
+  
+  // 3. 统一速度场：基础速度场 + 力调制
+  Eigen::Vector3d unified_velocity = base_velocity + force_modulation;
+  
+  // 4. 速度限制
+  double velocity_limit = ds_impedance_params_.max_velocity_;
+  if (unified_velocity.norm() > velocity_limit) {
+    unified_velocity = unified_velocity.normalized() * velocity_limit;
   }
+  
+  // 5. 确保最小速度，避免停滞
+  double min_velocity = ds_impedance_params_.min_velocity_;
+  double distance_to_target = (target_position_ - current_position).norm();
+  if (unified_velocity.norm() < min_velocity && distance_to_target > 1e-3) {
+    unified_velocity = unified_velocity.normalized() * min_velocity;
+  }
+  
+  return unified_velocity;
+}
+
+// 基础速度场：接近场与圆周场的自动混合
+Eigen::Vector3d UnifiedDSController::computeBaseVelocityField(const Eigen::Vector3d& current_position) {
+  // 目标位置：使用配置的吸引子位置，但Z坐标使用接触面高度
+  Eigen::Vector3d attractor = ds_impedance_params_.target_position;
+  attractor(2) = ds_impedance_params_.contact_surface_height_;
+  
+  Eigen::Vector3d relative_position = current_position - attractor;
+  double distance_to_attractor = relative_position.norm();
+  
+  if (distance_to_attractor < 1e-6) {
+    return Eigen::Vector3d::Zero();
+  }
+  
+  // 计算水平距离和高度误差
+  double horizontal_distance = sqrt(relative_position(0) * relative_position(0) +
+                                   relative_position(1) * relative_position(1));
+  double height_error = std::abs(relative_position(2));
+  double target_radius = ds_impedance_params_.circular_radius_;
+  
+  // === 改进：基于旋转矩阵的DS混合策略（参考SurfacePolishing.cpp:465-481） ===
+  
+  // 1. 计算接近速度方向（指向吸引子的直线接近）
+  // 修复：v0应该是从当前位置指向吸引子的速度，而不是简单的法向速度
+  Eigen::Vector3d approach_direction = -relative_position.normalized();  // 指向吸引子
+  Eigen::Vector3d v0 = ds_impedance_params_.linear_max_velocity_ * approach_direction;  // 接近速度
+  
+  // 2. 计算圆周运动速度（在表面上的投影）
+  Eigen::Vector3d circular_velocity_raw = computeCircularVelocity(relative_position, attractor);
+  
+  // 3. 将圆周运动投影到表面上（去除法向分量）
+  Eigen::Vector3d surface_normal(0.0, 0.0, 1.0);  // 表面法向量
+  Eigen::Matrix3d surface_projection = Eigen::Matrix3d::Identity() - surface_normal * surface_normal.transpose();
+  Eigen::Vector3d vd_contact = surface_projection * circular_velocity_raw;
+  
+  // 4. 保持圆周速度的原始幅值，不要标准化
+  if (vd_contact.norm() < 1e-6) {
+    // 如果圆周速度为零，使用默认切向方向和切向速度
+    vd_contact = Eigen::Vector3d(ds_impedance_params_.constant_tangential_speed_, 0.0, 0.0);
+  }
+  
+  // 5. 计算混合角度：基于竖直方向距离（到接触面的距离）
+  // 参考SurfacePolishing.cpp第467行: theta = (1.0f-std::tanh(10*_normalDistance))*angle
+  double normal_distance = std::max(0.0, height_error);  // 竖直方向距离到接触面
+  double angle = std::acos(std::max(-1.0, std::min(1.0, v0.normalized().dot(vd_contact.normalized()))));
+  double theta = (1.0 - std::tanh(10.0 * normal_distance)) * angle;  // 参考SurfacePolishing.cpp
+  
+  // 6. 计算旋转轴
+  Eigen::Vector3d rotation_axis = v0.normalized().cross(vd_contact.normalized());
+  
+  // 7. 构建旋转矩阵并应用混合
+  Eigen::Vector3d final_velocity;
+  
+  if (rotation_axis.norm() < 1e-6) {
+    // 如果没有旋转轴（向量平行），直接使用接近速度
+    final_velocity = v0;
+  } else {
+    // 标准化旋转轴
+    rotation_axis.normalize();
+    
+    // 使用Rodrigues旋转公式构建旋转矩阵
+    // R = I + sin(theta)*K + (1-cos(theta))*K^2
+    Eigen::Matrix3d K;
+    K << 0.0, -rotation_axis(2), rotation_axis(1),
+         rotation_axis(2), 0.0, -rotation_axis(0),
+         -rotation_axis(1), rotation_axis(0), 0.0;
+    
+    Eigen::Matrix3d R = Eigen::Matrix3d::Identity() + 
+                        std::sin(theta) * K + 
+                        (1.0 - std::cos(theta)) * K * K;
+    
+    // 应用旋转矩阵到接近速度的幅值，但旋转到圆周方向
+    Eigen::Vector3d v0_magnitude_vd_direction = v0.norm() * vd_contact.normalized();
+    final_velocity = R * v0;
+  }
+  
+  // 8. Z方向独立控制：仅用于高度快速收敛，不影响XY平面运动
+  // 这里只处理XY平面的混合，Z方向交给接触场处理
+  Eigen::Vector3d xy_velocity = final_velocity;
+
+  
+  // 调试输出（每2秒输出一次）
+  static int debug_counter = 0;
+  if (++debug_counter % 1000 == 0) {
+    ROS_INFO_STREAM("=== Base Velocity Field Debug ===");
+    ROS_INFO_STREAM("Horizontal distance: " << horizontal_distance << " m");
+    ROS_INFO_STREAM("Normal distance (height_error): " << height_error << " m");
+    ROS_INFO_STREAM("Target radius: " << target_radius << " m");
+    ROS_INFO_STREAM("Blend factor: " << normal_distance); // 使用normal_distance
+    ROS_INFO_STREAM("Theta: " << theta << " rad");
+    ROS_INFO_STREAM("Tangential speed from YAML: " << ds_impedance_params_.constant_tangential_speed_ << " m/s");
+    ROS_INFO_STREAM("Approach velocity norm: " << v0.norm() << " m/s");
+    ROS_INFO_STREAM("Circular velocity norm: " << vd_contact.norm() << " m/s");
+    ROS_INFO_STREAM("Final XY velocity norm: " << xy_velocity.norm() << " m/s");
+    ROS_INFO_STREAM("============================");
+  }
+  
+  return xy_velocity;
+}
+
+// 接近速度场
+Eigen::Vector3d UnifiedDSController::computeApproachVelocity(const Eigen::Vector3d& relative_position) {
+  Eigen::Vector3d approach_velocity;
+  
+  // XY方向：线性接近
+  double approach_gain_xy = ds_impedance_params_.approach_gain_;
+  approach_velocity(0) = -approach_gain_xy * relative_position(0);
+  approach_velocity(1) = -approach_gain_xy * relative_position(1);
+  
+  // Z方向：强化接近
+  double approach_gain_z = 3.0 * ds_impedance_params_.approach_gain_;
+  approach_velocity(2) = -approach_gain_z * relative_position(2);
+  
+  // 限制接近速度
+  double max_approach_speed = ds_impedance_params_.linear_max_velocity_;
+  if (approach_velocity.norm() > max_approach_speed) {
+    approach_velocity = approach_velocity.normalized() * max_approach_speed;
+  }
+  
+  return approach_velocity;
+}
+
+// 圆周速度场
+Eigen::Vector3d UnifiedDSController::computeCircularVelocity(const Eigen::Vector3d& relative_position, 
+                                                             const Eigen::Vector3d& attractor) {
+  // === 参考SurfacePolishing.cpp:494-512的getCircularMotionVelocity实现 ===
+  
+  Eigen::Vector3d circular_velocity = Eigen::Vector3d::Zero();
+  
+  // 计算相对于吸引子的位置
+  Eigen::Vector3d position_relative_to_attractor = relative_position;
+  
+  // Z方向：收敛到接触面（这部分将被接触场覆盖，这里保持简单）
+  circular_velocity(2) = 0;
+  
+  // XY平面圆周运动：参考SurfacePolishing.cpp的实现
+  double R_xy = sqrt(position_relative_to_attractor(0) * position_relative_to_attractor(0) + 
+                     position_relative_to_attractor(1) * position_relative_to_attractor(1));
+  
+  if (R_xy > 1e-6) {
+    // 计算极坐标
+    double cos_theta = position_relative_to_attractor(0) / R_xy;
+    double sin_theta = position_relative_to_attractor(1) / R_xy;
+    
+    // 获取圆周运动参数
+    double target_radius = ds_impedance_params_.circular_radius_;  // 对应SurfacePolishing中的r
+    double tangential_speed = ds_impedance_params_.constant_tangential_speed_;  // 使用YAML中的切向速度
+    
+    // 计算角速度：omega = v / r，其中v是切向速度，r是当前半径
+    double omega = tangential_speed/target_radius;  // 直接使用切向速度作为圆周运动的驱动
+    
+    // 参考SurfacePolishing.cpp:508-509的公式实现
+    // velocity(0) = -(R-r) * cos(T) - R * omega * sin(T);
+    // velocity(1) = -(R-r) * sin(T) + R * omega * cos(T);
+    
+    circular_velocity(0) = -(R_xy - target_radius) * cos_theta - R_xy * omega * sin_theta;
+    circular_velocity(1) = -(R_xy - target_radius) * sin_theta + R_xy * omega * cos_theta;
+    
+    // 这样实现的圆周运动特性：
+    // 1. 径向分量：-(R_xy - target_radius) * [cos_theta, sin_theta] 
+    //    当R_xy > target_radius时向内收缩，当R_xy < target_radius时向外扩张
+    // 2. 切向分量：-R_xy * omega * [sin_theta, -cos_theta]  
+    //    提供恒定角速度omega的圆周运动
+    // 3. 当R_xy = target_radius时，只有切向运动，实现匀速圆周
+  }
+  
+  return circular_velocity;
+}
+
+// 简化的状态更新
+void UnifiedDSController::updateSimpleControlState(double current_time, 
+                                                   const Eigen::Vector3d& current_position, 
+                                                   const Eigen::Vector3d& external_force) {
+  if (!is_calibrated_) {
+    // 校准阶段：等待力传感器校准完成
+    // 这里假设在forceDataCallback中已经设置了is_calibrated_标志
+    return;
+  }
+  
+  // 校准完成，等待用户启动命令
+  // motion_started_标志在userCommandCallback中设置
 }
 
 Vector7d UnifiedDSController::computeImpedanceControl(const Eigen::Vector3d& desired_velocity,
-                                                      const Eigen::Affine3d& transform,
-                                                      const Eigen::Matrix<double, 6, 1>& current_velocity,
-                                                      const Eigen::Matrix<double, 6, 7>& jacobian) {
-  // *** 修复：DS-阻抗控制律，移除分离的力控制 ***
-  // 按照论文方程：Fc = d1*f(x) + d1*fn(x) - D(x)*x_dot
-  // 由于力已经融入DS速度场，这里只需要实现速度跟踪控制
+                                                     const Eigen::Affine3d& transform,
+                                                     const Eigen::Matrix<double, 6, 1>& current_velocity,
+                                                     const Eigen::Matrix<double, 6, 7>& jacobian) {
+  // DS-阻抗控制律：统一速度场跟踪
+  // 公式：Fc = d1 * x˙d - D(x) * x˙
   
   // 获取当前线性和角速度
   Eigen::Vector3d current_linear_velocity = current_velocity.head(3);
@@ -345,19 +493,14 @@ Vector7d UnifiedDSController::computeImpedanceControl(const Eigen::Vector3d& des
   // 计算阻尼矩阵 D(x)
   Eigen::Matrix3d damping_matrix = Eigen::Matrix3d::Identity() * ds_impedance_params_.ds_damping_gain_;
   
-  // *** DS控制律：线性部分 ***
-  // 公式：Fc = d1 * x˙d - D(x) * x˙
-  // 其中 x˙d 已经包含了 f(x) + fn(x)（标称DS + 力调制）
-  Eigen::Vector3d ds_driving_force = d1 * desired_velocity;  // d1 * (f(x) + fn(x))
+  // DS控制律：线性部分
+  Eigen::Vector3d ds_driving_force = d1 * desired_velocity;  // d1 * (接近场 + 力调制)
   Eigen::Vector3d damping_force = -damping_matrix * current_linear_velocity;  // -D(x) * x˙
   
-  // 合成笛卡尔控制力（不再需要额外的力项）
+  // 合成笛卡尔控制力
   Eigen::Vector3d cartesian_force = ds_driving_force + damping_force;
   
-  // *** 姿态控制 - 强制保持末端执行器垂直 ***
-  Eigen::Quaterniond current_orientation(transform.rotation());
-  
-  // 目标姿态：末端执行器Z轴垂直向下
+  // 姿态控制 - 保持末端执行器垂直
   Eigen::Vector3d desired_z_axis(0.0, 0.0, -1.0);
   Eigen::Vector3d current_z_axis = transform.rotation().col(2);
   
@@ -398,7 +541,7 @@ Vector7d UnifiedDSController::computeImpedanceControl(const Eigen::Vector3d& des
   // 转换为关节力矩
   Vector7d tau_task = jacobian.transpose() * cartesian_wrench;
   
-  // 简化的零空间控制
+  // 零空间控制
   franka::RobotState robot_state = state_handle_->getRobotState();
   Eigen::Map<const Vector7d> q_current(robot_state.q.data());
   Eigen::Map<const Vector7d> dq_current(robot_state.dq.data());
@@ -424,169 +567,11 @@ Vector7d UnifiedDSController::computeImpedanceControl(const Eigen::Vector3d& des
   return tau_d;
 }
 
-Eigen::Vector3d UnifiedDSController::computeLinearDS(const Eigen::Vector3d& current_position) {
-  Eigen::Vector3d direction = target_position_ - current_position;
-  double distance = direction.norm();
-  
-  if (distance < 1e-6) {
-    return Eigen::Vector3d::Zero();
-  }
-  
-  direction.normalize();
-  double velocity_magnitude = ds_impedance_params_.linear_lambda_ * distance;
-  velocity_magnitude = std::min(velocity_magnitude, ds_impedance_params_.linear_max_velocity_);
-  
-  return velocity_magnitude * direction;
-}
-
-Eigen::Vector3d UnifiedDSController::computeCircularDS(const Eigen::Vector3d& current_position) {
-  // 修复：使用contact_surface_height作为圆周运动的目标高度
-  Eigen::Vector3d attractor = ds_impedance_params_.target_position;
-  attractor(2) = ds_impedance_params_.contact_surface_height_;  // 使用专门设置的接触面高度
-  
-  // 计算相对位置和距离
-  Eigen::Vector3d relative_position = current_position - attractor;
-  double distance_to_attractor = relative_position.norm();
-  
-  // 圆周运动参数
-  double target_radius = ds_impedance_params_.circular_radius_;
-  
-  // === 1. 改进的接近场设计（参考文档原版DS） ===
-  Eigen::Vector3d approach_velocity = Eigen::Vector3d::Zero();
-  if (distance_to_attractor > 1e-6) {
-    // 使用更强的接近增益，特别是对z方向
-    double approach_gain_xy = ds_impedance_params_.approach_gain_;  // XY方向接近增益
-    double approach_gain_z = 5.0 * ds_impedance_params_.approach_gain_;  // Z方向使用更强的增益
-    
-    approach_velocity(0) = -approach_gain_xy * relative_position(0);
-    approach_velocity(1) = -approach_gain_xy * relative_position(1);
-    approach_velocity(2) = -approach_gain_z * relative_position(2);  // 强化高度收敛
-    
-    // 限制接近速度幅值
-    double max_approach_speed = ds_impedance_params_.linear_max_velocity_;
-    if (approach_velocity.norm() > max_approach_speed) {
-      approach_velocity = approach_velocity.normalized() * max_approach_speed;
-    }
-  }
-  
-  // === 2. 改进的圆周运动速度 ===
-  Eigen::Vector3d circular_velocity = Eigen::Vector3d::Zero();
-  
-  // 水平面圆周运动（X-Y平面）
-  double R_xy = sqrt(relative_position(0) * relative_position(0) + 
-                     relative_position(1) * relative_position(1));
-  
-  if (R_xy > 1e-6) {
-    // 径向分量：收缩到目标半径
-    double radial_gain = ds_impedance_params_.radial_gain_;
-    double radial_velocity = -radial_gain * (R_xy - target_radius);
-    
-    // 切向分量：固定切向速度，确保圆周运动均匀
-    double constant_tangential_speed = ds_impedance_params_.constant_tangential_speed_;
-    
-    // 转换为笛卡尔坐标
-    double cos_theta = relative_position(0) / R_xy;
-    double sin_theta = relative_position(1) / R_xy;
-    
-    circular_velocity(0) = radial_velocity * cos_theta - constant_tangential_speed * sin_theta;
-    circular_velocity(1) = radial_velocity * sin_theta + constant_tangential_speed * cos_theta;
-  }
-  
-  // Z方向：使用专门的高度控制，确保在接触面高度进行圆周运动
-  circular_velocity(2) = -5.0 * relative_position(2);  // 更强的高度控制
-  
-  // === 3. 原版DS系统的平滑混合策略（参考SurfacePolishing.cpp:409-424） ===
-  double blend_distance = ds_impedance_params_.blend_distance_;
-  
-  // 计算表面法向量（这里简化为垂直向上，实际应该是动态计算的）
-  Eigen::Vector3d surface_normal(0.0, 0.0, 1.0);
-  
-  // 计算法向距离（到接触面的距离）
-  double normal_distance = current_position(2) - ds_impedance_params_.contact_surface_height_;
-  
-  // 原版DS系统的角度计算策略
-  // 基于法向距离的tanh函数，实现平滑过渡
-  double theta_max = M_PI / 3.0;  // 最大混合角度60度，增强混合效果
-  
-  // 改进的tanh混合函数，主要基于法向距离
-  double normalized_normal_distance = std::abs(normal_distance) / blend_distance;
-  
-  // 使用原版DS的tanh函数形式：(1.0 - tanh(10*_normalDistance)) * angle
-  // 这里的系数10来自原版DS代码
-  double theta = (1.0 - std::tanh(10.0 * normalized_normal_distance)) * theta_max;
-  
-  // 额外考虑水平距离的影响
-  double horizontal_distance = sqrt(relative_position(0) * relative_position(0) + 
-                                   relative_position(1) * relative_position(1));
-  
-  // 当接近目标半径时，增强圆周运动的权重
-  double radius_factor = 1.0;
-  if (horizontal_distance < target_radius * 2.0) {
-    radius_factor = 0.5 + 0.5 * (horizontal_distance / (target_radius * 2.0));
-    theta *= radius_factor;  // 在目标半径附近减小混合角度，增强圆周运动
-  }
-  
-  // 构建3D旋转矩阵R（原版DS的核心机制）
-  Eigen::Matrix3d R = Eigen::Matrix3d::Identity();
-  
-  // 基于theta角度的旋转矩阵计算
-  double cos_theta = std::cos(theta);
-  double sin_theta = std::sin(theta);
-  
-  // 原版DS的旋转矩阵：绕表面法向量旋转
-  // 这里简化为绕Z轴旋转（因为表面是水平的）
-  R(0, 0) = cos_theta;
-  R(0, 1) = -sin_theta;
-  R(1, 0) = sin_theta;  
-  R(1, 1) = cos_theta;
-  R(2, 2) = 1.0;
-  
-  // 原版DS核心公式：_fx = R * v0
-  // v0是基础速度场的组合
-  Eigen::Vector3d v0;
-  
-  // 根据距离和状态动态调整基础速度场组合
-  if (std::abs(normal_distance) > blend_distance * 0.8) {
-    // 远离接触面时：主要是接近运动
-    v0 = 0.9 * approach_velocity + 0.1 * circular_velocity;
-  } else if (horizontal_distance > target_radius * 1.2) {
-    // 在接触面附近但远离目标半径：混合接近和圆周
-    v0 = 0.6 * approach_velocity + 0.4 * circular_velocity;
-  } else {
-    // 在目标半径附近：主要是圆周运动
-    v0 = 0.2 * approach_velocity + 0.8 * circular_velocity;
-  }
-  
-  // 应用旋转矩阵进行最终混合
-  Eigen::Vector3d final_velocity = R * v0;
-  
-  // 特别强化z方向的收敛：当z偏差较大时，直接使用接近速度
-  double z_error = std::abs(relative_position(2));
-  if (z_error > 0.02) {  // 进一步降低阈值到2cm，更精确的高度控制
-    // 保持XY方向的混合，但Z方向使用强化的接近控制
-    double z_gain = 10.0;  // 强力Z方向增益
-    final_velocity(2) = -z_gain * relative_position(2);
-  }
-  
-  // === 5. 速度限制和归一化 ===
-  double velocity_limit = ds_impedance_params_.max_velocity_;
-  if (final_velocity.norm() > velocity_limit) {
-    final_velocity = final_velocity.normalized() * velocity_limit;
-  }
-  
-  // 确保最小速度，避免停滞
-  double min_velocity = ds_impedance_params_.min_velocity_;
-  if (final_velocity.norm() < min_velocity && distance_to_attractor > 1e-3) {
-    final_velocity = final_velocity.normalized() * min_velocity;
-  }
-  
-  return final_velocity;
-}
+// 旧的函数已删除，现在使用统一的速度场计算
 
 Eigen::Vector3d UnifiedDSController::computeForceModulation(const Eigen::Vector3d& current_position) {
-  // *** 核心修复：实现DS统一力调制机制 ***
-  // 按照论文公式：fn(x) = Fd(x)/d1 * n(x)
-  // 其中 Fd(x) 是期望力，n(x) 是表面法向量，d1 是阻抗增益
+  // *** 接触场：专门用于生成接触力的Z轴速度 ***
+  // 按照用户设想：2.2 接触场是用来生成接触力的z轴速度，在没有接触之前都是0，靠近接触面时慢速增大
   
   // 1. 计算表面法向量（简化版：垂直向上，接触面为水平面）
   Eigen::Vector3d surface_normal(0.0, 0.0, 1.0);  // 表面法向量垂直向上
@@ -597,36 +582,73 @@ Eigen::Vector3d UnifiedDSController::computeForceModulation(const Eigen::Vector3
   // 3. 获取DS阻抗增益 d1
   double d1 = ds_impedance_params_.ds_impedance_gain_;
   
-  // 4. 计算力调制速度项：fn(x) = Fd(x)/d1 * n(x)
-  Eigen::Vector3d force_modulation = (desired_force / d1) * surface_normal;
+  // 4. 计算到接触面的距离，用于判断是否生成接触场
+  double distance_to_surface = current_position(2) - ds_impedance_params_.contact_surface_height_;
   
-  return force_modulation;
+  // 5. 接触场的核心逻辑：只在接近接触面时生成Z轴速度
+  Eigen::Vector3d contact_field = Eigen::Vector3d::Zero();
+  
+  // 接触场的生成条件：
+  // - 在接触面上方一定范围内才开始生成
+  // - 距离越近，力越大，但永远不为零（持续生成力）
+  double contact_activation_distance = ds_impedance_params_.blend_distance_;  // 激活距离
+  
+  if (distance_to_surface > 0.0 && distance_to_surface < contact_activation_distance) {
+    // 在激活范围内：生成平滑增长的接触场
+    
+    // 使用平滑函数计算接触场强度，距离越近强度越大
+    // 参考SurfacePolishing.cpp中力的平滑生成
+    double contact_field_strength = 0.5 * (1.0 - std::tanh(5.0 * distance_to_surface / contact_activation_distance));
+    
+    // 接触场只在Z方向生成速度，用于产生接触力
+    // 公式：fn(x) = Fd(x)/d1 * n(x) * 接触场强度
+    contact_field = (desired_force / d1) * surface_normal * contact_field_strength;
+    
+  } else if (distance_to_surface <= 0.0) {
+    // 已经在接触面下方：生成完整的接触力
+    contact_field = (desired_force / d1) * surface_normal;
+  }
+  // else: 距离太远时，接触场为零（符合设想：没有接触之前都是0）
+  
+  return contact_field;
 }
 
 double UnifiedDSController::computeDesiredContactForce(const Eigen::Vector3d& current_position) {
-  // *** 动态力生成逻辑（参考原版DS SurfacePolishing.cpp:505-516） ***
+  // 动态力生成逻辑（参考原版DS SurfacePolishing.cpp:505-516）
+  // 改进：使用平滑函数生成连续的期望力
   
   // 计算到接触面的距离
   double distance_to_surface = current_position(2) - ds_impedance_params_.contact_surface_height_;
+  double blend_distance = ds_impedance_params_.blend_distance_; // 使用混合距离作为平滑过渡范围
   
-  // 检查是否接触
-  bool is_in_contact = (distance_to_surface <= 0.01) && (external_force_.norm() > ds_impedance_params_.contact_force_threshold_);
+  // 定义期望力和接触阈值
+  double desired_force_max = ds_impedance_params_.desired_normal_force_;
+  double contact_threshold_force = ds_impedance_params_.contact_force_threshold_;
+
+  // 计算力生成因子：当靠近接触面时，力从0平滑增加到desired_force_max
+  // 使用 sigmoid 或 tanh 函数实现平滑过渡
+  // 假设力从 contact_surface_height_ + blend_distance 开始平滑增加
+  // 当距离为 contact_surface_height_ 时达到 desired_force_max
   
-  if (!is_in_contact) {
-    // 未接触时：期望力为0（自由空间运动）
-    return 0.0;
-  } else {
-    // 接触时：根据当前法向力动态调整期望力
-    double current_normal_force = std::abs(external_force_(2));  // 简化：使用z方向力作为法向力
-    
-    if (current_normal_force < 3.0) {
-      // 如果当前力小于最小阈值，增加期望力
-      return 5.0;  // 增加到目标力
-    } else {
-      // 如果当前力足够，使用目标力
-      return ds_impedance_params_.desired_normal_force_;
-    }
+  // 使用 tanh 函数实现平滑的力生成，将距离映射到期望力
+  // 调整 tanh 输入，使其在接触面附近平滑过渡
+  // 当 distance_to_surface 远大于 0 时，force_factor 接近 0
+  // 当 distance_to_surface 远小于 0 时，force_factor 接近 1
+  double force_factor = 0.5 * (1.0 - std::tanh(10.0 * (distance_to_surface / blend_distance)));
+  
+  // 确保 force_factor 在0到1之间
+  force_factor = std::max(0.0, std::min(1.0, force_factor));
+
+  // 计算最终期望力
+  double final_desired_force = desired_force_max * force_factor;
+
+  // 额外考虑：如果当前外部力很小且机器人已在接触面下方，保持一个最小力
+  // 避免在轻微接触时期望力突然变为0，导致脱离
+  if (current_position(2) < ds_impedance_params_.contact_surface_height_ && external_force_.norm() < contact_threshold_force) {
+      final_desired_force = std::max(final_desired_force, 0.5); // 保持一个最小力，例如0.5N
   }
+
+  return final_desired_force;
 }
 
 Eigen::Vector3d UnifiedDSController::computeProbeDS(const Eigen::Vector3d& current_position) {
@@ -650,69 +672,7 @@ Vector7d UnifiedDSController::saturateTorqueRate(const Vector7d& tau_d_calculate
   return tau_d_saturated;
 }
 
-void UnifiedDSController::updateControlPhase(double current_time, 
-                                              const Eigen::Vector3d& current_position, 
-                                              const Eigen::Vector3d& external_force) {
-  switch (current_phase_) {
-    case ControlPhase::CALIBRATION: {
-      // 等待力传感器校准完成
-      if (force_sensor_calibrated_) {
-        current_phase_ = ControlPhase::INITIALIZATION;
-        phase_start_time_ = ros::Time::now();
-        ROS_INFO("Calibration complete. Send 'start' command to begin motion.");
-        ROS_INFO_STREAM("Initial position: [" << current_position.transpose() 
-                       << "], distance to target: " << (target_position_ - current_position).norm() << " m");
-        ROS_INFO_STREAM("Baseline force: " << external_force.norm() << " N");
-      }
-      break;
-    }
-    
-    case ControlPhase::INITIALIZATION: {
-      // *** 关键修复：等待用户"start"命令，不自动进入下一阶段 ***
-      if (user_start_command_received_) {
-        current_phase_ = ControlPhase::ACCELERATION;
-        phase_start_time_ = ros::Time::now();
-        user_start_command_received_ = false;  // 重置标志
-        ROS_INFO_STREAM("Starting motion to target position [" << target_position_.transpose() << "]");
-        ROS_INFO_STREAM("Distance to target: " << (target_position_ - current_position).norm() 
-                       << " m, Acceleration duration: " << ds_impedance_params_.acceleration_duration_ << " seconds");
-      }
-      // 否则保持在INITIALIZATION阶段，等待用户命令
-      break;
-    }
-    
-    case ControlPhase::ACCELERATION: {
-      double acceleration_time = (ros::Time::now() - phase_start_time_).toSec();
-      if (acceleration_time >= ds_impedance_params_.acceleration_duration_) {
-        current_phase_ = ControlPhase::CIRCULAR_MOTION;
-        phase_start_time_ = ros::Time::now();
-        ROS_INFO("Acceleration complete, switching directly to CIRCULAR_MOTION phase");
-      }
-      break;
-    }
-    
-    case ControlPhase::LINEAR_APPROACH: {
-      // 此阶段现在被跳过，直接在加速后进入圆周运动
-      current_phase_ = ControlPhase::CIRCULAR_MOTION;
-      phase_start_time_ = ros::Time::now();
-      ROS_INFO("Switching to CIRCULAR_MOTION phase");
-      break;
-    }
-    
-    case ControlPhase::PROBE_DESCENT: {
-      // 此阶段现在被跳过，直接进入圆周运动
-      current_phase_ = ControlPhase::CIRCULAR_MOTION;
-      phase_start_time_ = ros::Time::now();
-      ROS_INFO("Switching to CIRCULAR_MOTION phase");
-      break;
-    }
-    
-    case ControlPhase::CIRCULAR_MOTION: {
-      // 持续圆形运动，直到外部停止
-      break;
-    }
-  }
-}
+// 旧的阶段控制函数已删除，现在使用简化的状态管理
 
 bool UnifiedDSController::loadDSImpedanceParameters(ros::NodeHandle& nh) {
   // 目标位置参数
@@ -725,7 +685,7 @@ bool UnifiedDSController::loadDSImpedanceParameters(ros::NodeHandle& nh) {
   }
   
   // DS参数
-  nh.param("linear_lambda", ds_impedance_params_.linear_lambda_, 2.0);
+  // nh.param("linear_lambda", ds_impedance_params_.linear_lambda_, 2.0); // 已删除
   nh.param("linear_max_velocity", ds_impedance_params_.linear_max_velocity_, 0.05);
   nh.param("circular_radius", ds_impedance_params_.circular_radius_, 0.02);  // 修复：默认值改为0.02匹配配置文件
   // circular_omega 参数已删除 - 代码中实际使用 constant_tangential_speed
@@ -777,18 +737,18 @@ bool UnifiedDSController::loadDSImpedanceParameters(ros::NodeHandle& nh) {
   
   // 接触检测参数
   nh.param("contact_force_threshold", ds_impedance_params_.contact_force_threshold_, 0.5);
-  nh.param("max_contact_force", ds_impedance_params_.max_contact_force_, 10.0);
+  // nh.param("max_contact_force", ds_impedance_params_.max_contact_force_, 10.0); // 已删除
   
   // 能量罐参数
   nh.param("energy_tank_max", ds_impedance_params_.energy_tank_max_, 4.0);
   
   // 安全参数
   nh.param("max_velocity", ds_impedance_params_.max_velocity_, 0.1);
-  nh.param("max_acceleration", ds_impedance_params_.max_acceleration_, 0.5);
-  nh.param("velocity_safety_factor", ds_impedance_params_.velocity_safety_factor_, 0.5);
+  // nh.param("max_acceleration", ds_impedance_params_.max_acceleration_, 0.5); // 已删除
+  // nh.param("velocity_safety_factor", ds_impedance_params_.velocity_safety_factor_, 0.5); // 已删除
   
   // 加速阶段参数
-  nh.param("acceleration_duration", ds_impedance_params_.acceleration_duration_, 3.0);
+  // 加速持续时间参数已删除，现在使用统一速度场
   
   // 打印加载的关键参数用于调试
   ROS_INFO("Loaded DS-Impedance Parameters:");
@@ -826,39 +786,69 @@ void UnifiedDSController::initializeROSInterface(ros::NodeHandle& nh) {
 }
 
 void UnifiedDSController::userCommandCallback(const std_msgs::String::ConstPtr& msg) {
-  if (msg->data == "start" && current_phase_ == ControlPhase::INITIALIZATION) {
-    user_start_command_received_ = true;
-    ROS_INFO("User command received: starting motion sequence");
+  ROS_INFO_STREAM("=== Received user command: '" << msg->data << "' ===");
+  ROS_INFO_STREAM("Current state: is_calibrated_=" << (is_calibrated_ ? "true" : "false") 
+                  << ", motion_started_=" << (motion_started_ ? "true" : "false"));
+  
+  if (msg->data == "start" && is_calibrated_ && !motion_started_) {
+    motion_started_ = true;
+    ROS_INFO("=== USER COMMAND: MOTION STARTED ===");
+    ROS_INFO("Successfully switched from calibration to motion phase");
+    ROS_INFO_STREAM("Current position: [" << position_cache_.transpose() << "]");
+    ROS_INFO_STREAM("Target position: [" << target_position_.transpose() << "]");
+    ROS_INFO_STREAM("Distance to target: " << (target_position_ - position_cache_).norm() << " m");
+    ROS_INFO("Unified velocity field (approach + circular + force modulation) activated");
+  } else if (msg->data == "start" && !is_calibrated_) {
+    ROS_WARN("Cannot start motion: Force sensor calibration not completed yet");
+    ROS_WARN_STREAM("Current force magnitude: " << external_force_.norm() << " N");
+  } else if (msg->data == "start" && motion_started_) {
+    ROS_INFO("Motion already started, ignoring duplicate start command");
+  } else {
+    ROS_WARN_STREAM("Unknown command or invalid state for command: '" << msg->data << "'");
   }
+  
+  ROS_INFO("=== Command processing complete ===");
 }
 
 void UnifiedDSController::forceDataCallback(const geometry_msgs::WrenchStamped::ConstPtr& msg) {
-  // *** 修复：添加原版DS系统的力数据滤波机制 ***
-  // 原始力数据
+  // 力传感器数据处理和低通滤波
   Eigen::Vector3d raw_force(msg->wrench.force.x, msg->wrench.force.y, msg->wrench.force.z);
   
-  // 原版DS低通滤波：_filteredWrench = _filteredForceGain*_filteredWrench+(1.0f-_filteredForceGain)*_wrench
-  double filtered_force_gain = ds_impedance_params_.filtered_force_gain_;  // 滤波增益，0.9表示90%保留历史值，10%使用新值
+  // 实现一阶低通滤波器以减少噪声
+  double filtered_force_gain = ds_impedance_params_.filtered_force_gain_;
+  external_force_ = filtered_force_gain * external_force_ + (1.0 - filtered_force_gain) * raw_force;
   
-  // 首次使用时初始化滤波值
-  static bool first_force_data = true;
-  if (first_force_data) {
-    external_force_ = raw_force;
-    first_force_data = false;
-  } else {
-    // 应用低通滤波
-    external_force_ = filtered_force_gain * external_force_ + (1.0 - filtered_force_gain) * raw_force;
+  // 在校准阶段进行力传感器调零检测
+  if (!is_calibrated_) {
+    static ros::Time calibration_start_time = ros::Time::now();
+    static bool calibration_started = false;
+    
+    // 检查力值是否小于0.5N
+    double force_magnitude = external_force_.norm();
+    
+    if (force_magnitude < 0.5) {
+      if (!calibration_started) {
+        calibration_start_time = ros::Time::now();
+        calibration_started = true;
+        ROS_INFO("Force sensor calibration started - force below 0.5N, waiting 3 seconds...");
+      }
+      
+      double elapsed_time = (ros::Time::now() - calibration_start_time).toSec();
+      if (elapsed_time >= 3.0) {
+        is_calibrated_ = true;
+        baseline_force_z_ = external_force_(2);
+        ROS_INFO("===== FORCE SENSOR CALIBRATION COMPLETED =====");
+        ROS_INFO_STREAM("Force stable below 0.5N for 3 seconds. Final force: " << force_magnitude << " N");
+        ROS_INFO("System ready - frontend start button can now be clicked");
+      }
+    } else {
+      // 如果力值超过阈值，重新开始计时
+      if (calibration_started) {
+        calibration_started = false;
+        ROS_INFO_STREAM("Force too high (" << force_magnitude << " N), restarting calibration timer");
+      }
+    }
   }
-  
-  // 在校准阶段计算基线力（使用滤波后的数据）
-  if (current_phase_ == ControlPhase::CALIBRATION) {
-    baseline_force_z_ = external_force_(2);
-    force_sensor_calibrated_ = true;
-  }
-  
-  // 计算相对于基线的接触力（使用滤波后的数据）
-  contact_force_ = external_force_;
-  contact_force_(2) -= baseline_force_z_;
 }
 
 void UnifiedDSController::publishControlStatus() {
@@ -867,35 +857,15 @@ void UnifiedDSController::publishControlStatus() {
   std_msgs::String phase_msg;
   
   // 根据当前阶段发布对应的状态消息
-  switch (current_phase_) {
-    case ControlPhase::CALIBRATION:
-      status_msg.data = "Initializing...";
-      phase_msg.data = "CALIBRATION";
-      break;
-    case ControlPhase::INITIALIZATION:
-      status_msg.data = "CALIBRATION_COMPLETE";  // UI期望的消息
-      phase_msg.data = "INITIALIZATION";
-      break;
-    case ControlPhase::ACCELERATION:
-      status_msg.data = "MOTION_STARTED";
-      phase_msg.data = "ACCELERATION";
-      break;
-    case ControlPhase::LINEAR_APPROACH:
-      status_msg.data = "MOTION_STARTED";
-      phase_msg.data = "LINEAR_APPROACH";
-      break;
-    case ControlPhase::PROBE_DESCENT:
-      status_msg.data = "MOTION_STARTED";
-      phase_msg.data = "PROBE_DESCENT";
-      break;
-    case ControlPhase::CIRCULAR_MOTION:
-      status_msg.data = "MOTION_STARTED";
-      phase_msg.data = "CIRCULAR_MOTION";
-      break;
-    default:
-      status_msg.data = "Unknown";
-      phase_msg.data = "UNKNOWN";
-      break;
+  if (!is_calibrated_) {
+    status_msg.data = "CALIBRATING";
+    phase_msg.data = "CALIBRATION";
+  } else if (!motion_started_) {
+    status_msg.data = "CALIBRATION_COMPLETE";  // UI界面期望的消息
+    phase_msg.data = "READY";
+  } else {
+    status_msg.data = "MOTION_STARTED";
+    phase_msg.data = "MOTION";
   }
   
   // 发布状态消息

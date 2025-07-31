@@ -2,7 +2,7 @@
 # 此文件包含所有DS阻抗控制器的关键参数
 
 # ========== 控制流程参数 ==========
-acceleration_duration: 3.0        # 加速阶段持续时间 [s] - 控制器启动后的缓慢加速时间，避免突然运动
+# acceleration_duration: 3.0        # 加速阶段持续时间 [s] - 控制器启动后的缓慢加速时间，避免突然运动 (已废弃)
 approach_gain: 2.0                # 接近运动增益 [1/s] - 控制机器人向目标吸引子收敛的速度，值越大收敛越快
 blend_distance: 0.1               # 运动模式混合距离阈值 [m] - 距离吸引子多远开始从接近运动切换到圆周运动
 
@@ -23,24 +23,21 @@ constant_tangential_speed: 0.05    # 固定切向速度 [m/s] - 圆周运动的�
 
 # ========== 接触检测与力控制参数 ==========
 contact_force_threshold: 2.0      # 接触力检测阈值 [N] - 避免误触发
-contact_surface_height: 0.185 # 接触面高度 [m] - 期望的接触面Z坐标，由set_attractor_position.py自动设置
+contact_surface_height: 0.165 # 接触面高度 [m] - 期望的接触面Z坐标，由set_attractor_position.py自动设置
 desired_normal_force: 2.0         # 期望法向接触力 [N] - 接触时希望施加的垂直力，建议3.0-10.0
 filtered_force_gain: 0.9          # 力传感器滤波增益 [0-1] - 0.9表示强滤波
 force_modulation_gain: 1.0        # 力调制增益gamma_p - 建议0.5-2.0
 
 # ========== DS核心控制参数 ==========
 ds_damping_gain: 25.0             # DS阻尼增益 [N*s/m] - 控制速度阻尼，值越大运动越平稳但响应变慢
-ds_impedance_gain: 170.0          # DS阻抗增益d1 [N*s/m] - 核心参数！控制DS速度场强度，影响跟踪性能
+ds_impedance_gain: 120.0          # DS阻抗增益d1 [N*s/m] - 核心参数！控制DS速度场强度，影响跟踪性能
 exploration_speed: 0.01           # 探索速度 [m/s] - 用于探测阶段的下降速度
-linear_lambda: 2.0                # 线性DS收敛因子 [1/s] - 控制线性接近的收敛速度
 linear_max_velocity: 0.15         # 线性DS最大速度 [m/s] - 从0.05提升到0.15，接近原版DS的0.25
 
 # ========== 能量罐参数 ==========
-energy_tank_max: 40.0             # 能量罐最大容量 [J] - 从4.0提升到20.0，接近原版DS的60J，提升柔顺性
+energy_tank_max: 60.0             # 能量罐最大容量 [J] - 从4.0提升到20.0，接近原版DS的60J，提升柔顺性
 
 # ========== 安全限制参数 ==========
-max_acceleration: 0.5             # 最大加速度限制 [m/s²] - 防止剧烈运动的安全保护
-max_contact_force: 10.0           # 最大接触力 [N] - 接触力上限，超过会触发保护
 max_joint_torque: 15.0            # 每个关节最大力矩 [Nm] - 关节力矩安全限制
 max_orientation_torque: 15.0      # 最大姿态控制力矩 [Nm] - 姿态控制力矩上限
 max_velocity: 0.1                 # 全局最大速度限制 [m/s] - 所有运动的速度上限，建议0.1-0.3
@@ -51,15 +48,14 @@ nullspace_stiffness: 20.0         # 零空间刚度 [Nm/rad] - 控制关节回�
 
 # ========== 姿态控制参数 ==========
 orientation_damping: 15.0         # 姿态阻尼 [Nm*s/rad] - 姿态控制的阻尼系数
-orientation_stiffness: 50.0       # 姿态刚度 [Nm/rad] - 保持末端执行器垂直的刚度
+orientation_stiffness: 70.0       # 姿态刚度 [Nm/rad] - 保持末端执行器垂直的刚度
 
 # ========== 运动质量参数 ==========
-radial_gain: 3.0                  # 径向收缩增益 [1/s] - 控制向目标半径收敛的速度
-velocity_safety_factor: 1         # 速度安全系数 - 整体速度的缩放因子，0.5表示减半
+radial_gain: 5.0                  # 径向收缩增益 [1/s] - 控制向目标半径收敛的速度
 
 # ========== 目标位置配置 ==========
 # 由set_attractor_position.py脚本自动设置，无需手动修改
 target_position:                  # 目标吸引子位置 [m]
 - 0.4551259910313041             # X坐标
 - 0.10602150095204013            # Y坐标  
-- 0.185             # Z坐标（与contact_surface_height应保持一致）
+- 0.165             # Z坐标（与contact_surface_height应保持一致）
