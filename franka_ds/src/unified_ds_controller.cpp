@@ -95,6 +95,10 @@ bool UnifiedDSController::init(hardware_interface::RobotHW* robot_hw, ros::NodeH
   contact_force_.setZero();
   baseline_force_z_ = 0.0;
   
+  // 初始化力误差PI控制状态
+  force_error_integral_ = 0.0;
+  last_pi_update_time_ = ros::Time::now();
+  
   ROS_INFO("Unified DS-Impedance Controller initialization successful");
   ROS_INFO_STREAM("Parameters: Circle radius=" << ds_impedance_params_.circular_radius_ 
                   << "m, Linear velocity=" << ds_impedance_params_.linear_max_velocity_ 
@@ -160,9 +164,6 @@ void UnifiedDSController::update(const ros::Time& time, const ros::Duration& per
   // 计算当前笛卡尔速度
   cartesian_velocity_cache_ = jacobian * dq;
   
-  // 简化的状态管理
-  updateSimpleControlState(time.toSec(), position_cache_, external_force_);
-  
   // 计算期望速度
   if (!is_calibrated_ || !motion_started_) {
     // 校准阶段或等待启动：零速度
@@ -176,7 +177,7 @@ void UnifiedDSController::update(const ros::Time& time, const ros::Duration& per
   constrained_velocity_cache_ = nominal_ds_velocity_cache_;
   if (is_calibrated_ && motion_started_) {
     // 计算la (调制增益) - 参照 SurfacePolishing.cpp
-    double d1 = ds_impedance_params_.ds_impedance_gain_;
+    double d1 = ds_impedance_params_.ds_damping_gain_;
     double gammap = ds_impedance_params_.force_modulation_gain_;
     double desired_force = computeDesiredContactForce(position_cache_);
     Eigen::Vector3d surface_normal(0.0, 0.0, 1.0);
@@ -249,6 +250,7 @@ void UnifiedDSController::update(const ros::Time& time, const ros::Duration& per
       ROS_INFO_STREAM("DS velocity norm: " << nominal_ds_velocity_cache_.norm() << " m/s");
       ROS_INFO_STREAM("DS velocity: [" << nominal_ds_velocity_cache_.transpose() << "] m/s");
       ROS_INFO_STREAM("Actual velocity norm: " << cartesian_velocity_cache_.head(3).norm() << " m/s");
+      ROS_INFO_STREAM("Z-axis force: " << getNormalForce() << " N (target: " << computeDesiredContactForce(position_cache_) << " N)");
       ROS_INFO_STREAM("Energy tank: " << energy_tank_manager_->getCurrentEnergy() << "/" << ds_impedance_params_.energy_tank_max_ << " J");
       ROS_INFO_STREAM("===================");
     }
@@ -296,9 +298,8 @@ Eigen::Vector3d UnifiedDSController::computeUnifiedDS(const Eigen::Vector3d& cur
 
 // 基础速度场：接近场与圆周场的自动混合
 Eigen::Vector3d UnifiedDSController::computeBaseVelocityField(const Eigen::Vector3d& current_position) {
-  // 目标位置：使用配置的吸引子位置，但Z坐标使用接触面高度
+  // 目标位置：使用配置的吸引子位置
   Eigen::Vector3d attractor = ds_impedance_params_.target_position;
-  attractor(2) = ds_impedance_params_.contact_surface_height_;
   
   Eigen::Vector3d relative_position = current_position - attractor;
   double distance_to_attractor = relative_position.norm();
@@ -326,32 +327,25 @@ Eigen::Vector3d UnifiedDSController::computeBaseVelocityField(const Eigen::Vecto
   // 3. 将圆周运动投影到表面上（去除法向分量）
   Eigen::Vector3d surface_normal(0.0, 0.0, 1.0);  // 表面法向量
   Eigen::Matrix3d surface_projection = Eigen::Matrix3d::Identity() - surface_normal * surface_normal.transpose();
-  Eigen::Vector3d vd_contact = surface_projection * circular_velocity_raw;
+  Eigen::Vector3d circular_velocity_projected = surface_projection * circular_velocity_raw;
   
   // 4. 保持圆周速度的原始幅值，不要标准化
-  if (vd_contact.norm() < 1e-6) {
+  if (circular_velocity_projected.norm() < 1e-6) {
     // 如果圆周速度为零，使用默认切向方向和切向速度
-    vd_contact = Eigen::Vector3d(ds_impedance_params_.constant_tangential_speed_, 0.0, 0.0);
+    circular_velocity_projected = Eigen::Vector3d(ds_impedance_params_.constant_tangential_speed_, 0.0, 0.0);
   }
   
   // 5. 计算混合角度：基于竖直方向距离（到接触面的距离）
   // 参考SurfacePolishing.cpp第467行: theta = (1.0f-std::tanh(10*_normalDistance))*angle
   double normal_distance = std::max(0.0, height_error);  // 竖直方向距离到接触面
-  double angle = std::acos(std::max(-1.0, std::min(1.0, v0.normalized().dot(vd_contact.normalized()))));
+  double angle = std::acos(std::max(-1.0, std::min(1.0, v0.normalized().dot(circular_velocity_projected.normalized()))));
   double theta = (1.0 - std::tanh(10.0 * normal_distance)) * angle;  // 参考SurfacePolishing.cpp
   
-  // 6. 计算旋转轴
-  Eigen::Vector3d rotation_axis = v0.normalized().cross(vd_contact.normalized());
+  // 6. 计算旋转轴 - 使用固定的Z轴方向作为转轴
+  Eigen::Vector3d rotation_axis(0.0, 0.0, 1.0);  // 固定使用Z轴作为旋转轴
   
   // 7. 构建旋转矩阵并应用混合
   Eigen::Vector3d final_velocity;
-  
-  if (rotation_axis.norm() < 1e-6) {
-    // 如果没有旋转轴（向量平行），直接使用接近速度
-    final_velocity = v0;
-  } else {
-    // 标准化旋转轴
-    rotation_axis.normalize();
     
     // 使用Rodrigues旋转公式构建旋转矩阵
     // R = I + sin(theta)*K + (1-cos(theta))*K^2
@@ -365,14 +359,8 @@ Eigen::Vector3d UnifiedDSController::computeBaseVelocityField(const Eigen::Vecto
                         (1.0 - std::cos(theta)) * K * K;
     
     // 应用旋转矩阵到接近速度的幅值，但旋转到圆周方向
-    Eigen::Vector3d v0_magnitude_vd_direction = v0.norm() * vd_contact.normalized();
+    // Eigen::Vector3d v0_magnitude_vd_direction = v0.norm() * circular_velocity_projected.normalized(); // 这一行被注释，保持原样
     final_velocity = R * v0;
-  }
-  
-  // 8. Z方向独立控制：仅用于高度快速收敛，不影响XY平面运动
-  // 这里只处理XY平面的混合，Z方向交给接触场处理
-  Eigen::Vector3d xy_velocity = final_velocity;
-
   
   // 调试输出（每2秒输出一次）
   static int debug_counter = 0;
@@ -381,30 +369,28 @@ Eigen::Vector3d UnifiedDSController::computeBaseVelocityField(const Eigen::Vecto
     ROS_INFO_STREAM("Horizontal distance: " << horizontal_distance << " m");
     ROS_INFO_STREAM("Normal distance (height_error): " << height_error << " m");
     ROS_INFO_STREAM("Target radius: " << target_radius << " m");
-    ROS_INFO_STREAM("Blend factor: " << normal_distance); // 使用normal_distance
+    ROS_INFO_STREAM("Blend factor (normal_distance): " << normal_distance); // 使用normal_distance
     ROS_INFO_STREAM("Theta: " << theta << " rad");
     ROS_INFO_STREAM("Tangential speed from YAML: " << ds_impedance_params_.constant_tangential_speed_ << " m/s");
     ROS_INFO_STREAM("Approach velocity norm: " << v0.norm() << " m/s");
-    ROS_INFO_STREAM("Circular velocity norm: " << vd_contact.norm() << " m/s");
-    ROS_INFO_STREAM("Final XY velocity norm: " << xy_velocity.norm() << " m/s");
+    ROS_INFO_STREAM("Circular velocity norm: " << circular_velocity_projected.norm() << " m/s");
+    ROS_INFO_STREAM("Final Base velocity norm: " << final_velocity.norm() << " m/s"); // 修正打印名称
+    ROS_INFO_STREAM("Final Base velocity: [" << final_velocity.transpose() << "] m/s"); // 添加详细打印
     ROS_INFO_STREAM("============================");
   }
   
-  return xy_velocity;
+  return final_velocity;
 }
 
 // 接近速度场
 Eigen::Vector3d UnifiedDSController::computeApproachVelocity(const Eigen::Vector3d& relative_position) {
   Eigen::Vector3d approach_velocity;
   
-  // XY方向：线性接近
-  double approach_gain_xy = ds_impedance_params_.approach_gain_;
-  approach_velocity(0) = -approach_gain_xy * relative_position(0);
-  approach_velocity(1) = -approach_gain_xy * relative_position(1);
-  
-  // Z方向：强化接近
-  double approach_gain_z = 3.0 * ds_impedance_params_.approach_gain_;
-  approach_velocity(2) = -approach_gain_z * relative_position(2);
+
+  double approach_gain= ds_impedance_params_.approach_gain_;
+  approach_velocity(0) = -approach_gain * relative_position(0);
+  approach_velocity(1) = -approach_gain * relative_position(1);
+  approach_velocity(2) = -approach_gain * relative_position(2);
   
   // 限制接近速度
   double max_approach_speed = ds_impedance_params_.linear_max_velocity_;
@@ -439,17 +425,18 @@ Eigen::Vector3d UnifiedDSController::computeCircularVelocity(const Eigen::Vector
     
     // 获取圆周运动参数
     double target_radius = ds_impedance_params_.circular_radius_;  // 对应SurfacePolishing中的r
-    double tangential_speed = ds_impedance_params_.constant_tangential_speed_;  // 使用YAML中的切向速度
+    double tangential_linear_speed = ds_impedance_params_.constant_tangential_speed_;  // 使用YAML中的切向速度
     
     // 计算角速度：omega = v / r，其中v是切向速度，r是当前半径
-    double omega = tangential_speed/target_radius;  // 直接使用切向速度作为圆周运动的驱动
+    // double omega = tangential_linear_speed / target_radius;  // 已废弃，直接使用 tangential_linear_speed
     
     // 参考SurfacePolishing.cpp:508-509的公式实现
     // velocity(0) = -(R-r) * cos(T) - R * omega * sin(T);
     // velocity(1) = -(R-r) * sin(T) + R * omega * cos(T);
     
-    circular_velocity(0) = -(R_xy - target_radius) * cos_theta - R_xy * omega * sin_theta;
-    circular_velocity(1) = -(R_xy - target_radius) * sin_theta + R_xy * omega * cos_theta;
+    // 修正：直接使用 tangential_linear_speed 作为切向分量，确保恒定切向线性速度
+    circular_velocity(0) = -0.5*(R_xy - target_radius) * cos_theta - tangential_linear_speed * sin_theta;
+    circular_velocity(1) = -0.5*(R_xy - target_radius) * sin_theta + tangential_linear_speed * cos_theta;
     
     // 这样实现的圆周运动特性：
     // 1. 径向分量：-(R_xy - target_radius) * [cos_theta, sin_theta] 
@@ -462,20 +449,8 @@ Eigen::Vector3d UnifiedDSController::computeCircularVelocity(const Eigen::Vector
   return circular_velocity;
 }
 
-// 简化的状态更新
-void UnifiedDSController::updateSimpleControlState(double current_time, 
-                                                   const Eigen::Vector3d& current_position, 
-                                                   const Eigen::Vector3d& external_force) {
-  if (!is_calibrated_) {
-    // 校准阶段：等待力传感器校准完成
-    // 这里假设在forceDataCallback中已经设置了is_calibrated_标志
-    return;
-  }
-  
-  // 校准完成，等待用户启动命令
-  // motion_started_标志在userCommandCallback中设置
-}
 
+// DS-阻抗控制律：统一速度场跟踪
 Vector7d UnifiedDSController::computeImpedanceControl(const Eigen::Vector3d& desired_velocity,
                                                      const Eigen::Affine3d& transform,
                                                      const Eigen::Matrix<double, 6, 1>& current_velocity,
@@ -487,15 +462,15 @@ Vector7d UnifiedDSController::computeImpedanceControl(const Eigen::Vector3d& des
   Eigen::Vector3d current_linear_velocity = current_velocity.head(3);
   Eigen::Vector3d current_angular_velocity = current_velocity.tail(3);
   
-  // DS阻抗增益 d1
-  double d1 = ds_impedance_params_.ds_impedance_gain_;
+  // DS阻抗增益 d1（统一驱动和阻尼增益）
+  double d1 = ds_impedance_params_.ds_damping_gain_;
   
-  // 计算阻尼矩阵 D(x)
-  Eigen::Matrix3d damping_matrix = Eigen::Matrix3d::Identity() * ds_impedance_params_.ds_damping_gain_;
+  // 计算动态阻尼矩阵 D(x) = U * Λ * U^T
+  computeDynamicDampingMatrix(desired_velocity);
   
   // DS控制律：线性部分
   Eigen::Vector3d ds_driving_force = d1 * desired_velocity;  // d1 * (接近场 + 力调制)
-  Eigen::Vector3d damping_force = -damping_matrix * current_linear_velocity;  // -D(x) * x˙
+  Eigen::Vector3d damping_force = -damping_matrix_cache_ * current_linear_velocity;  // -D(x) * x˙
   
   // 合成笛卡尔控制力
   Eigen::Vector3d cartesian_force = ds_driving_force + damping_force;
@@ -567,58 +542,83 @@ Vector7d UnifiedDSController::computeImpedanceControl(const Eigen::Vector3d& des
   return tau_d;
 }
 
-// 旧的函数已删除，现在使用统一的速度场计算
-
-Eigen::Vector3d UnifiedDSController::computeForceModulation(const Eigen::Vector3d& current_position) {
-  // *** 接触场：专门用于生成接触力的Z轴速度 ***
-  // 按照用户设想：2.2 接触场是用来生成接触力的z轴速度，在没有接触之前都是0，靠近接触面时慢速增大
+// D(x) = U * Λ * U^T 计算
+void UnifiedDSController::computeDynamicDampingMatrix(const Eigen::Vector3d& desired_velocity) {
+  const double min_speed = 1e-6;
   
-  // 1. 计算表面法向量（简化版：垂直向上，接触面为水平面）
-  Eigen::Vector3d surface_normal(0.0, 0.0, 1.0);  // 表面法向量垂直向上
-  
-  // 2. 计算期望接触力 Fd(x)（动态调整，参考原版DS）
-  double desired_force = computeDesiredContactForce(current_position);
-  
-  // 3. 获取DS阻抗增益 d1
-  double d1 = ds_impedance_params_.ds_impedance_gain_;
-  
-  // 4. 计算到接触面的距离，用于判断是否生成接触场
-  double distance_to_surface = current_position(2) - ds_impedance_params_.contact_surface_height_;
-  
-  // 5. 接触场的核心逻辑：只在接近接触面时生成Z轴速度
-  Eigen::Vector3d contact_field = Eigen::Vector3d::Zero();
-  
-  // 接触场的生成条件：
-  // - 在接触面上方一定范围内才开始生成
-  // - 距离越近，力越大，但永远不为零（持续生成力）
-  double contact_activation_distance = ds_impedance_params_.blend_distance_;  // 激活距离
-  
-  if (distance_to_surface > 0.0 && distance_to_surface < contact_activation_distance) {
-    // 在激活范围内：生成平滑增长的接触场
-    
-    // 使用平滑函数计算接触场强度，距离越近强度越大
-    // 参考SurfacePolishing.cpp中力的平滑生成
-    double contact_field_strength = 0.5 * (1.0 - std::tanh(5.0 * distance_to_surface / contact_activation_distance));
-    
-    // 接触场只在Z方向生成速度，用于产生接触力
-    // 公式：fn(x) = Fd(x)/d1 * n(x) * 接触场强度
-    contact_field = (desired_force / d1) * surface_normal * contact_field_strength;
-    
-  } else if (distance_to_surface <= 0.0) {
-    // 已经在接触面下方：生成完整的接触力
-    contact_field = (desired_force / d1) * surface_normal;
+  if (desired_velocity.norm() > min_speed) {
+    computeOrthonormalBasis(desired_velocity.normalized());
+  } else {
+    // 期望速度为零时，使用单位矩阵作为基
+    basis_matrix_.setIdentity();
   }
-  // else: 距离太远时，接触场为零（符合设想：没有接触之前都是0）
   
-  return contact_field;
+  // 设置特征值对角矩阵 Λ = diag(d1, d2, d3)
+  damping_eigval_matrix_.setZero();
+  damping_eigval_matrix_(0, 0) = ds_impedance_params_.ds_damping_gain_;           // d1
+  damping_eigval_matrix_(1, 1) = ds_impedance_params_.ds_damping_gain_orthogonal_; // d2
+  damping_eigval_matrix_(2, 2) = ds_impedance_params_.ds_damping_gain_orthogonal_; // d3
+  
+  // D(x) = U * Λ * U^T
+  damping_matrix_cache_ = basis_matrix_ * damping_eigval_matrix_ * basis_matrix_.transpose();
 }
 
-double UnifiedDSController::computeDesiredContactForce(const Eigen::Vector3d& current_position) {
+// Gram-Schmidt正交化构建正交基U
+void UnifiedDSController::computeOrthonormalBasis(const Eigen::Vector3d& desired_velocity_normalized) {
+  // 第一列设为期望速度方向
+  basis_matrix_.col(0) = desired_velocity_normalized;
+  
+  // 构建第二列：在XY平面内选择与第一列正交的向量
+  Eigen::Vector3d temp_vec(1.0, 0.0, 0.0);
+  if (std::abs(desired_velocity_normalized.dot(temp_vec)) > 0.9) {
+    temp_vec = Eigen::Vector3d(0.0, 1.0, 0.0);
+  }
+  basis_matrix_.col(1) = temp_vec - basis_matrix_.col(0) * basis_matrix_.col(0).dot(temp_vec);
+  basis_matrix_.col(1).normalize();
+  
+  // 第三列：叉积确保右手系
+  basis_matrix_.col(2) = basis_matrix_.col(0).cross(basis_matrix_.col(1));
+}
+
+
+// 力调制向量 - 基于原版DS的力反馈机制
+Eigen::Vector3d UnifiedDSController::computeForceModulation(const Eigen::Vector3d& current_position) {
+  // 1. 初始化力调制向量
+  Eigen::Vector3d force_modulation = Eigen::Vector3d::Zero();
+  
+  // 2. 如果系统未校准或运动未开始，不生成力调制
+  if (!is_calibrated_ || !motion_started_) {
+    return force_modulation;
+  }
+  
+  // 3. 获取控制参数
+  double d1 = ds_impedance_params_.ds_damping_gain_;
+  double gammap = ds_impedance_params_.force_modulation_gain_;
+  
+  // 4. 获取实际Z轴法向力和期望力
+  double actual_normal_force = getNormalForce();
+  double desired_force_value = computeDesiredContactForce(current_position);
+  
+  // 5. 表面法向量 (Z轴向下)
+  Eigen::Vector3d surface_normal(0.0, 0.0, -1.0);
+  
+  // 6. 基于原版DS的力调制公式: gammap*Fd*e1/d1
+  // 这个调制项会根据期望力生成额外的Z轴速度分量
+  force_modulation = (gammap * desired_force_value / d1) * surface_normal;
+  
+  // 7. 添加PI力误差补偿
+  Eigen::Vector3d pi_compensation = computeForceErrorPI(current_position);
+  force_modulation += pi_compensation;
+  
+  return force_modulation;
+}
   // 动态力生成逻辑（参考原版DS SurfacePolishing.cpp:505-516）
   // 改进：使用平滑函数生成连续的期望力
+double UnifiedDSController::computeDesiredContactForce(const Eigen::Vector3d& current_position) {
+
   
   // 计算到接触面的距离
-  double distance_to_surface = current_position(2) - ds_impedance_params_.contact_surface_height_;
+  double distance_to_surface = current_position(2) - ds_impedance_params_.target_position(2);
   double blend_distance = ds_impedance_params_.blend_distance_; // 使用混合距离作为平滑过渡范围
   
   // 定义期望力和接触阈值
@@ -627,14 +627,14 @@ double UnifiedDSController::computeDesiredContactForce(const Eigen::Vector3d& cu
 
   // 计算力生成因子：当靠近接触面时，力从0平滑增加到desired_force_max
   // 使用 sigmoid 或 tanh 函数实现平滑过渡
-  // 假设力从 contact_surface_height_ + blend_distance 开始平滑增加
-  // 当距离为 contact_surface_height_ 时达到 desired_force_max
+  // 假设力从 target_position(2) + blend_distance 开始平滑增加
+  // 当距离为 target_position(2) 时达到 desired_force_max
   
   // 使用 tanh 函数实现平滑的力生成，将距离映射到期望力
   // 调整 tanh 输入，使其在接触面附近平滑过渡
   // 当 distance_to_surface 远大于 0 时，force_factor 接近 0
   // 当 distance_to_surface 远小于 0 时，force_factor 接近 1
-  double force_factor = 0.5 * (1.0 - std::tanh(10.0 * (distance_to_surface / blend_distance)));
+  double force_factor = 1.0 - std::tanh(10.0 * (distance_to_surface / blend_distance));
   
   // 确保 force_factor 在0到1之间
   force_factor = std::max(0.0, std::min(1.0, force_factor));
@@ -644,23 +644,69 @@ double UnifiedDSController::computeDesiredContactForce(const Eigen::Vector3d& cu
 
   // 额外考虑：如果当前外部力很小且机器人已在接触面下方，保持一个最小力
   // 避免在轻微接触时期望力突然变为0，导致脱离
-  if (current_position(2) < ds_impedance_params_.contact_surface_height_ && external_force_.norm() < contact_threshold_force) {
+  if (current_position(2) < ds_impedance_params_.target_position(2) && fabs(external_force_(2)) < contact_threshold_force) {
       final_desired_force = std::max(final_desired_force, 0.5); // 保持一个最小力，例如0.5N
   }
 
   return final_desired_force;
 }
 
-Eigen::Vector3d UnifiedDSController::computeProbeDS(const Eigen::Vector3d& current_position) {
-  // 垂直向下探测
-  Eigen::Vector3d probe_velocity;
-  probe_velocity << 0.0, 0.0, -ds_impedance_params_.exploration_speed_;
-  return probe_velocity;
+// 获取Z轴法向力
+double UnifiedDSController::getNormalForce() const {
+  // 直接返回Z轴方向的力，负值表示向下的压力
+  return external_force_(2);
 }
 
-bool UnifiedDSController::detectContact(const Eigen::Vector3d& external_force) {
-  double force_magnitude = external_force.norm();
-  return force_magnitude > ds_impedance_params_.contact_force_threshold_;
+// 力误差PI控制计算
+Eigen::Vector3d UnifiedDSController::computeForceErrorPI(const Eigen::Vector3d& current_position) {
+  Eigen::Vector3d pi_compensation = Eigen::Vector3d::Zero();
+  
+  // 只在校准完成且运动开始后才进行PI控制
+  if (!is_calibrated_ || !motion_started_) {
+    return pi_compensation;
+  }
+  
+  // 计算当前期望的Z轴力（基于位置）
+  double desired_force_z = computeDesiredContactForce(current_position);
+  
+  // 获取实际Z轴力（传感器坐标系，向下为负）
+  double actual_force_z = getNormalForce();
+  
+  // 计算力误差（期望 - 实际）
+  // 注意：传感器向下为负，期望向下力也为负值
+  double force_error = -desired_force_z - actual_force_z;  // 力误差，正值表示需要增加向下力
+  
+  // 计算时间步长
+  ros::Time current_time = ros::Time::now();
+  double dt = (current_time - last_pi_update_time_).toSec();
+  
+  // 防止dt过大或过小
+  if (dt <= 0.0 || dt > 0.1) {
+    dt = 0.001;  // 默认1ms
+  }
+  
+  // 比例项
+  double p_term = ds_impedance_params_.force_error_kp_ * force_error;
+  
+  // 积分项（带饱和限制）
+  force_error_integral_ += force_error * dt;
+  
+  // 积分饱和限制
+  double max_integral = ds_impedance_params_.force_error_max_integral_ / ds_impedance_params_.force_error_ki_;
+  force_error_integral_ = std::max(-max_integral, std::min(max_integral, force_error_integral_));
+  
+  double i_term = ds_impedance_params_.force_error_ki_ * force_error_integral_;
+  
+  // PI输出（向Z方向的速度补偿）
+  double z_velocity_compensation = p_term + i_term;
+  
+  // 设置Z方向速度补偿（正值向上，负值向下）
+  pi_compensation(2) = z_velocity_compensation;
+  
+  // 更新时间
+  last_pi_update_time_ = current_time;
+  
+  return pi_compensation;
 }
 
 Vector7d UnifiedDSController::saturateTorqueRate(const Vector7d& tau_d_calculated, const Vector7d& tau_J_d) {
@@ -672,8 +718,7 @@ Vector7d UnifiedDSController::saturateTorqueRate(const Vector7d& tau_d_calculate
   return tau_d_saturated;
 }
 
-// 旧的阶段控制函数已删除，现在使用简化的状态管理
-
+//加载参数
 bool UnifiedDSController::loadDSImpedanceParameters(ros::NodeHandle& nh) {
   // 目标位置参数
   std::vector<double> target_pos;
@@ -688,12 +733,11 @@ bool UnifiedDSController::loadDSImpedanceParameters(ros::NodeHandle& nh) {
   // nh.param("linear_lambda", ds_impedance_params_.linear_lambda_, 2.0); // 已删除
   nh.param("linear_max_velocity", ds_impedance_params_.linear_max_velocity_, 0.05);
   nh.param("circular_radius", ds_impedance_params_.circular_radius_, 0.02);  // 修复：默认值改为0.02匹配配置文件
-  // circular_omega 参数已删除 - 代码中实际使用 constant_tangential_speed
   nh.param("exploration_speed", ds_impedance_params_.exploration_speed_, 0.01);
   
-  // DS控制核心参数
-  nh.param("ds_impedance_gain", ds_impedance_params_.ds_impedance_gain_, 150.0);
-  nh.param("ds_damping_gain", ds_impedance_params_.ds_damping_gain_, 25.0);
+  // DS核心参数
+  nh.param("ds_damping_gain", ds_impedance_params_.ds_damping_gain_, 150.0);
+  nh.param("ds_damping_gain_orthogonal", ds_impedance_params_.ds_damping_gain_orthogonal_, 20.0);
   nh.param("approach_gain", ds_impedance_params_.approach_gain_, 2.0);
   nh.param("radial_gain", ds_impedance_params_.radial_gain_, 1.0);
   nh.param("constant_tangential_speed", ds_impedance_params_.constant_tangential_speed_, 0.3);  // 修复：默认值改为0.3匹配配置文件
@@ -707,9 +751,13 @@ bool UnifiedDSController::loadDSImpedanceParameters(ros::NodeHandle& nh) {
   
   // 接触力控制参数
   nh.param("desired_normal_force", ds_impedance_params_.desired_normal_force_, 5.0);
-  nh.param("contact_surface_height", ds_impedance_params_.contact_surface_height_, 0.18);
   nh.param("filtered_force_gain", ds_impedance_params_.filtered_force_gain_, 0.9);
   nh.param("force_modulation_gain", ds_impedance_params_.force_modulation_gain_, 1.0);  // 添加gamma_p参数加载
+  
+  // 力误差PI控制参数
+  nh.param("force_error_kp", ds_impedance_params_.force_error_kp_, 0.02);
+  nh.param("force_error_ki", ds_impedance_params_.force_error_ki_, 0.01);
+  nh.param("force_error_max_integral", ds_impedance_params_.force_error_max_integral_, 0.05);
   
   // 安全力矩限制
   nh.param("max_joint_torque", ds_impedance_params_.max_joint_torque_, 15.0);
@@ -755,8 +803,8 @@ bool UnifiedDSController::loadDSImpedanceParameters(ros::NodeHandle& nh) {
   ROS_INFO_STREAM("  circular_radius: " << ds_impedance_params_.circular_radius_ << " m");
   // circular_omega 调试输出已删除
   ROS_INFO_STREAM("  constant_tangential_speed: " << ds_impedance_params_.constant_tangential_speed_ << " m/s");
-  ROS_INFO_STREAM("  ds_impedance_gain: " << ds_impedance_params_.ds_impedance_gain_ << " N*s/m");
-  ROS_INFO_STREAM("  contact_surface_height: " << ds_impedance_params_.contact_surface_height_ << " m");
+  ROS_INFO_STREAM("  ds_impedance_gain: " << ds_impedance_params_.ds_damping_gain_ << " N*s/m");
+  ROS_INFO_STREAM("  target_position(2): " << ds_impedance_params_.target_position(2) << " m");
   ROS_INFO_STREAM("  target_position: [" << ds_impedance_params_.target_position.transpose() << "] m");
   ROS_INFO_STREAM("  approach_gain: " << ds_impedance_params_.approach_gain_ << " 1/s");
   ROS_INFO_STREAM("  radial_gain: " << ds_impedance_params_.radial_gain_ << " 1/s");
@@ -809,7 +857,7 @@ void UnifiedDSController::userCommandCallback(const std_msgs::String::ConstPtr& 
   
   ROS_INFO("=== Command processing complete ===");
 }
-
+// 力传感器滤波
 void UnifiedDSController::forceDataCallback(const geometry_msgs::WrenchStamped::ConstPtr& msg) {
   // 力传感器数据处理和低通滤波
   Eigen::Vector3d raw_force(msg->wrench.force.x, msg->wrench.force.y, msg->wrench.force.z);
@@ -823,10 +871,10 @@ void UnifiedDSController::forceDataCallback(const geometry_msgs::WrenchStamped::
     static ros::Time calibration_start_time = ros::Time::now();
     static bool calibration_started = false;
     
-    // 检查力值是否小于0.5N
-    double force_magnitude = external_force_.norm();
+    // 检查Z轴力是否小于0.5N
+    double z_force_magnitude = fabs(external_force_(2));
     
-    if (force_magnitude < 0.5) {
+    if (z_force_magnitude < 0.5) {
       if (!calibration_started) {
         calibration_start_time = ros::Time::now();
         calibration_started = true;
@@ -838,14 +886,14 @@ void UnifiedDSController::forceDataCallback(const geometry_msgs::WrenchStamped::
         is_calibrated_ = true;
         baseline_force_z_ = external_force_(2);
         ROS_INFO("===== FORCE SENSOR CALIBRATION COMPLETED =====");
-        ROS_INFO_STREAM("Force stable below 0.5N for 3 seconds. Final force: " << force_magnitude << " N");
+        ROS_INFO_STREAM("Z-axis force stable below 0.5N for 3 seconds. Final Z force: " << z_force_magnitude << " N");
         ROS_INFO("System ready - frontend start button can now be clicked");
       }
     } else {
       // 如果力值超过阈值，重新开始计时
       if (calibration_started) {
         calibration_started = false;
-        ROS_INFO_STREAM("Force too high (" << force_magnitude << " N), restarting calibration timer");
+        ROS_INFO_STREAM("Z-axis force too high (" << z_force_magnitude << " N), restarting calibration timer");
       }
     }
   }

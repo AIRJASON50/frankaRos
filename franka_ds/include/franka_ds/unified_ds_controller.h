@@ -58,8 +58,8 @@ class UnifiedDSController : public controller_interface::MultiInterfaceControlle
     double contact_surface_height_;
     
     // DS核心参数
-    double ds_impedance_gain_;
-    double ds_damping_gain_;
+    double ds_damping_gain_;                  // d1: 期望速度方向的阻尼增益 [Nm*s/m]
+    double ds_damping_gain_orthogonal_;       // d2/d3: 垂直于期望速度方向的阻尼增益 [Nm*s/m]
     double approach_gain_;
     double radial_gain_;
     
@@ -78,6 +78,11 @@ class UnifiedDSController : public controller_interface::MultiInterfaceControlle
     double max_contact_force_;
     double filtered_force_gain_;
     double force_modulation_gain_;
+    
+    // 力误差PI控制参数
+    double force_error_kp_;              // 力误差比例增益 [m/s/N]
+    double force_error_ki_;              // 力误差积分增益 [m/s/N/s]
+    double force_error_max_integral_;    // 积分项饱和限制 [m/s]
     
     // 阻抗控制参数
     Eigen::Matrix3d cartesian_stiffness_pos_;
@@ -120,10 +125,15 @@ class UnifiedDSController : public controller_interface::MultiInterfaceControlle
   
   // 力调制
   Eigen::Vector3d computeForceModulation(const Eigen::Vector3d& current_position);
-  double computeDesiredContactForce(const Eigen::Vector3d& current_position);
+  double computeDesiredContactForce(const Eigen::Vector3d& position);
+  double getNormalForce() const;  // 获取Z轴法向力
   
-  // 探测DS（保留但简化）
-  Eigen::Vector3d computeProbeDS(const Eigen::Vector3d& current_position);
+  // 力误差PI控制
+  Eigen::Vector3d computeForceErrorPI(const Eigen::Vector3d& current_position);
+  
+  // D(x) computation methods
+  void computeDynamicDampingMatrix(const Eigen::Vector3d& desired_velocity);
+  void computeOrthonormalBasis(const Eigen::Vector3d& desired_velocity_normalized);
   
   // 阻抗控制
   Vector7d computeImpedanceControl(const Eigen::Vector3d& desired_velocity,
@@ -132,11 +142,7 @@ class UnifiedDSController : public controller_interface::MultiInterfaceControlle
                                   const Eigen::Matrix<double, 6, 7>& jacobian);
 
   // === 辅助函数 ===
-  bool detectContact(const Eigen::Vector3d& external_force);
   Vector7d saturateTorqueRate(const Vector7d& tau_d_calculated, const Vector7d& tau_J_d);
-  void updateSimpleControlState(double current_time, 
-                               const Eigen::Vector3d& current_position, 
-                               const Eigen::Vector3d& external_force);
 
   // === 参数和ROS接口 ===
   bool loadDSImpedanceParameters(ros::NodeHandle& nh);
@@ -174,6 +180,10 @@ class UnifiedDSController : public controller_interface::MultiInterfaceControlle
   Eigen::Vector3d contact_force_;
   double baseline_force_z_;
   
+  // === 力误差PI控制状态 ===
+  double force_error_integral_;        // 力误差积分累积值
+  ros::Time last_pi_update_time_;      // 上次PI更新时间
+  
   // === 能量罐管理 ===
   std::unique_ptr<EnergyTankManager> energy_tank_manager_;
   
@@ -185,6 +195,11 @@ class UnifiedDSController : public controller_interface::MultiInterfaceControlle
   mutable Eigen::Vector3d nominal_ds_velocity_cache_;
   mutable Eigen::Vector3d constrained_velocity_cache_;
   mutable Vector7d tau_d_cache_;
+  
+  // D(x) computation variables
+  mutable Eigen::Matrix3d damping_matrix_cache_;
+  mutable Eigen::Matrix3d basis_matrix_;
+  mutable Eigen::Matrix3d damping_eigval_matrix_;
   
   // === ROS接口 ===
   ros::Subscriber sub_user_command_;

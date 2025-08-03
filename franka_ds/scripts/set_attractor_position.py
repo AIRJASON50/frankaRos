@@ -79,15 +79,7 @@ class PositionSetter:
             with open(self.config_path, 'r', encoding='utf-8') as file:
                 content = file.read()
             
-            # 更新 contact_surface_height（保持注释）
-            contact_pattern = r'(contact_surface_height:\s*)[0-9.-]+(\s*#.*)?'
-            match = re.search(contact_pattern, content)
-            if match:
-                if match.group(2):  # 有注释
-                    new_contact_value = f'{match.group(1)}{position[2]:.16f}{match.group(2)}'
-                else:  # 没有注释
-                    new_contact_value = f'{match.group(1)}{position[2]:.16f}'
-                content = re.sub(contact_pattern, new_contact_value, content)
+
             
             # 更新 target_position 部分（保持注释和格式）
             # 找到 target_position 开始位置
@@ -131,7 +123,6 @@ class PositionSetter:
             
             rospy.loginfo(f"✅ 成功更新配置文件:")
             rospy.loginfo(f"   target_position: [{position[0]:.6f}, {position[1]:.6f}, {position[2]:.6f}]")
-            rospy.loginfo(f"   contact_surface_height: {position[2]:.6f}")
             return True
             
         except Exception as e:

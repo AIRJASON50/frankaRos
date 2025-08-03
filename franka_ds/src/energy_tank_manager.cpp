@@ -36,8 +36,8 @@ void EnergyTankManager::updateTankDynamics(const Eigen::Vector3d& current_veloci
   // Update scalar regulation functions
   updateScalarFunctions();
   
-  // *** 核心修改：能量罐动力学：ṡ = α*p_d - β*(la-1.0f)*p_n - γ*p_f ***
-  const double energy_derivative = alpha_ * p_d_ - beta_ * (la - 1.0) * p_n_ - gamma_ * p_f_;
+  // *** 核心修改：能量罐动力学：ṡ = α*p_d - β*p_n - γ*p_f ***
+  const double energy_derivative = alpha_ * p_d_ - beta_ * p_n_ - gamma_ * p_f_;
   power_flow_ = energy_derivative;
   
   // Update energy level
@@ -170,38 +170,36 @@ void EnergyTankManager::computeForcePower(const Eigen::Vector3d& velocity,
 }
 
 void EnergyTankManager::updateScalarFunctions() {
-  // *** 修复：更精确地模仿SurfacePolishing.cpp中的标量调整逻辑 ***
-  const double energy_ratio = getEnergyRatio();
+  // 能量比例
+  double energy_ratio = s_ / s_max_;
+  double delta_ratio = 0.1;  // 固定δ比例，对应论文中的δs
   
-  // α 随能量比例平滑调整
-  // 能量越低，耗散项权重越高，防止能量耗尽
-  alpha_ = DEFAULT_ALPHA * std::max(1.0, 2.0 * (1.0 - energy_ratio)); // 能量低时alpha增大
+  // 论文附录B公式25的Υ函数实现: Υ_{a,b}^-(x) 
+  auto upsilon_func = [](double x, double a, double b) -> double {
+    if (x < a) return 1.0;
+    if (x > b) return 0.0;
+    return 0.5 * (1.0 + std::cos(M_PI * (x - a) / (b - a)));
+  };
   
-  // β 和 γ 的条件判断 (硬切换)
-  // 参考 SurfacePolishing.cpp 的 updateTankScalars()
+  // α(s): 当能量接近满时从1平滑过渡到0
+  alpha_ = upsilon_func(energy_ratio, 1.0 - delta_ratio, 1.0);
   
-  // β: 标称DS功率系数
-  // 如果能量过低且标称功率为负 (表示DS在消耗能量，帮助能量罐恢复)，则 β=0 (关闭DS能量消耗，让能量罐恢复)
-  // 如果能量过高且标称功率为正 (表示DS在注入能量，导致能量溢出)，则 β=0 (关闭DS能量注入，防止溢出)
-  // 否则 β=1.0 (正常DS能量消耗/注入)
-  if (s_ <= ENERGY_EPSILON && p_n_ < 0.0) { // 能量低且DS正在消耗能量 (帮助能量罐恢复)
-    beta_ = 0.0; 
-  } else if (s_ >= s_max_ - ENERGY_EPSILON && p_n_ > 0.0) { // 能量高且DS正在注入能量 (防止溢出)
-    beta_ = 0.0; 
+  // β(s,p_n): 根据能量水平和p_n符号动态调节
+  if (p_n_ > 0.0) {
+    // p_n > 0: DS在消耗能量，当能量低时限制流出
+    beta_ = upsilon_func(energy_ratio, 0.0, delta_ratio);
   } else {
-    beta_ = DEFAULT_BETA; // 正常情况
+    // p_n < 0: 环境在补充能量，当能量高时限制流入
+    beta_ = upsilon_func(energy_ratio, 1.0 - delta_ratio, 1.0);
   }
-
-  // γ: 力反馈功率系数
-  // 如果能量过低且力功率为正 (表示力反馈在注入能量，导致能量溢出)，则 γ=0 (关闭力反馈能量注入)
-  // 如果能量过高且力功率为负 (表示力反馈在消耗能量，帮助能量罐恢复)，则 γ=0 (关闭力反馈能量消耗)
-  // 否则 γ=1.0 (正常力反馈能量消耗/注入)
-  if (s_ <= ENERGY_EPSILON && p_f_ > 0.0) { // 能量低且力反馈正在注入能量 (防止溢出)
-    gamma_ = 0.0; 
-  } else if (s_ >= s_max_ - ENERGY_EPSILON && p_f_ < 0.0) { // 能量高且力反馈正在消耗能量 (帮助能量罐恢复)
-    gamma_ = 0.0; 
+  
+  // γ(s,p_f): 根据能量水平和p_f符号动态调节  
+  if (p_f_ > 0.0) {
+    // p_f > 0: 力项在消耗能量，当能量低时限制流出
+    gamma_ = upsilon_func(energy_ratio, 0.0, delta_ratio);
   } else {
-    gamma_ = DEFAULT_GAMMA; // 正常情况
+    // p_f < 0: 力项在补充能量，当能量高时限制流入
+    gamma_ = upsilon_func(energy_ratio, 1.0 - delta_ratio, 1.0);
   }
 }
 
