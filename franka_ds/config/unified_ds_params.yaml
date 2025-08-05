@@ -18,7 +18,7 @@ cartesian_stiffness_pos:          # 位置刚度矩阵对角线元素 [N/m]
 
 # ========== 圆周运动DS参数 ==========
 circular_radius: 0.025             # 圆周运动半径 [m] - 机器人绕吸引子做圆周运动的半径，建议范围0.01-0.1
-constant_tangential_speed: 0.008    # 固定切向速度 [m/s] - 圆周运动的线速度，影响运动流畅性
+constant_tangential_speed: 0.0003    # 固定切向速度 [m/s] - 圆周运动的线速度，影响运动流畅性
 
 # ========== 接触检测与力控制参数 ==========
 contact_force_threshold: 0.1      # 接触力检测阈值 [N] - 避免误触发
@@ -27,17 +27,17 @@ filtered_force_gain: 0.9          # 力传感器滤波增益 [0-1] - 0.9表示�
 force_modulation_gain: 1.0        # 力调制增益gamma_p - 建议0.5-2.0
 
 # ========== 力误差PI控制参数 ==========
-force_error_kp: 0.04              # 力误差比例增益 [m/s/N] - P项增益，控制对力误差的即时响应
+force_error_kp: 0.03              # 力误差比例增益 [m/s/N] - P项增益，控制对力误差的即时响应
 force_error_ki: 0.01              # 力误差积分增益 [m/s/N/s] - I项增益，消除稳态力误差
 force_error_max_integral: 0.05    # 积分项饱和限制 [m/s] - 防止积分饱和，建议0.02-0.1
 
 # ========== DS核心控制参数 ==========
 # DS控制参数 - Dynamical Systems相关参数
-ds_damping_gain: 100.0            # d1: 统一阻抗增益，控制期望速度方向的驱动强度和阻尼 [Nm*s/m]，范围：100-300
-ds_damping_gain_orthogonal: 20.0  # d2/d3: 垂直于期望速度方向的阻尼增益 [Nm*s/m]，范围：10-50
-approach_gain: 20.0                # 接近增益，控制向吸引子收敛的速度 [-]，范围：1-10
-exploration_speed: 0.01           # 探索速度 [m/s] - 用于探测阶段的下降速度
-linear_max_velocity: 0.25         # 线性DS最大速度 [m/s] - 从0.05提升到0.15，接近原版DS的0.25
+ds_damping_gain: 70.0            # d1: 统一阻抗增益，控制期望速度方向的驱动强度和阻尼 [Nm*s/m]，范围：100-300
+ds_damping_gain_orthogonal: 10.0  # d2/d3: 垂直于期望速度方向的阻尼增益 [Nm*s/m]，范围：10-50
+approach_gain: 10.0                # 接近增益，控制向吸引子收敛的速度 [-]，范围：1-10
+exploration_speed: 0.005           # 探索速度 [m/s] - 用于探测阶段的下降速度
+linear_max_velocity: 0.2         # 线性DS最大速度 [m/s] - 从0.05提升到0.15，接近原版DS的0.25
 
 # ========== 能量罐参数 ==========
 energy_tank_max: 40.0             # 能量罐最大容量 [J] - 从4.0提升到20.0，接近原版DS的60J，提升柔顺性
@@ -53,14 +53,14 @@ nullspace_stiffness: 20.0         # 零空间刚度 [Nm/rad] - 控制关节回�
 
 # ========== 姿态控制参数 ==========
 orientation_damping: 15         # 姿态阻尼 [Nm*s/rad] - 姿态控制的阻尼系数
-orientation_stiffness: 70.0       # 姿态刚度 [Nm/rad] - 保持末端执行器垂直的刚度
+orientation_stiffness: 50.0       # 姿态刚度 [Nm/rad] - 保持末端执行器垂直的刚度
 
 # ========== 运动质量参数 ==========
-radial_gain: 8.0                  # 径向收缩增益 [1/s] - 控制向目标半径收敛的速度
+radial_gain: 5.0                  # 径向收缩增益 [1/s] - 控制向目标半径收敛的速度
 
 # ========== 目标位置配置 ==========
 # 由set_attractor_position.py脚本自动设置，无需手动修改
 target_position:                  # 目标吸引子位置 [m]
-- 0.4145409462444539             # X坐标
-- 0.0854433571429344            # Y坐标  
-- 0.3006839390198383             # Z坐标（与contact_surface_height应保持一致）
+- 0.4506096722501885             # X坐标
+- 0.0786608138595294            # Y坐标  
+- 0.1763731320012153             # Z坐标（与contact_surface_height应保持一致）
