@@ -1,22 +1,3 @@
 [submodule "force_based_ds_modulation"]
 	path = force_based_ds_modulation
 	url = https://github.com/AIRJASON50/force_based_ds_modulation.git
-
-[submodule "openRes/Compliant-Control-and-Application"]
-	path = openRes/Compliant-Control-and-Application
-	url = https://github.com/AIRJASON50/Compliant-Control-and-Application.git
-[submodule "openRes/admm"]
-	path = openRes/admm
-	url = https://github.com/AIRJASON50/admm.git
-[submodule "openRes/demonstration/FoAR"]
-	path = openRes/demonstration/FoAR
-	url = https://github.com/AIRJASON50/FoAR.git
-[submodule "openRes/demonstration/act1/act"]
-	path = openRes/demonstration/act1/act
-	url = https://github.com/AIRJASON50/act.git
-[submodule "openRes/demonstration/act1/aloha"]
-	path = openRes/demonstration/act1/aloha
-	url = https://github.com/AIRJASON50/aloha.git
-[submodule "openRes/ds_Dx/MEAM-6230-non-conservative-DS-controller"]
-	path = openRes/ds_Dx/MEAM-6230-non-conservative-DS-controller
-	url = https://github.com/AIRJASON50/MEAM-6230-non-conservative-DS-controller.git
