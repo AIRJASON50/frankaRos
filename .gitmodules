@@ -1,6 +1,0 @@
-[submodule "force_based_ds_modulation"]
-	path = force_based_ds_modulation
-	url = https://github.com/AIRJASON50/force_based_ds_modulation.git
-[submodule "openRes/Compliant-Control-and-Application"]
-	path = openRes/Compliant-Control-and-Application
-	url = https://github.com/AIRJASON50/Compliant-Control-and-Application.git
